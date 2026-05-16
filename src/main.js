@@ -176,7 +176,7 @@ app.innerHTML = `
           <h2>效果设置</h2>
         </div>
 
-        <div class="field">
+        <div id="productUploadField" class="field">
           <label>产品图片</label>
           <div class="product-upload-actions">
             <label class="primary panel-file-button">
@@ -205,7 +205,7 @@ app.innerHTML = `
           <p class="field-hint">上传产品图片后必须设置，所有背景都会使用同一种占位形状。</p>
         </div>
 
-        <div class="field">
+        <div id="backgroundUploadField" class="field">
           <label>背景库</label>
           <div class="background-actions">
             <label class="mini-button">
@@ -410,7 +410,7 @@ function getSelectedProductItems() {
 }
 
 function setAllProductFilesSelected(selected) {
-  if (!state.fileItems.length) return;
+  if (!state.fileItems.length || isWaitingForProductShape()) return;
   state.fileItems.forEach((item) => {
     item.selected = selected;
   });
@@ -420,6 +420,7 @@ function setAllProductFilesSelected(selected) {
 }
 
 function clearProductFiles() {
+  if (isWaitingForProductShape()) return;
   if (!state.fileItems.length) return;
   clearRendered();
   revokeProductFileUrls();
@@ -434,7 +435,7 @@ function clearProductFiles() {
 }
 
 function removeProductFile(id) {
-  if (state.processing) return;
+  if (state.processing || isWaitingForProductShape()) return;
   const index = state.fileItems.findIndex((item) => item.id === id);
   if (index < 0) return;
   const [item] = state.fileItems.splice(index, 1);
@@ -458,6 +459,12 @@ function revokeProductFileUrls() {
 }
 
 async function handleBackgroundFiles(event) {
+  if (isWaitingForProductShape()) {
+    event.target.value = "";
+    updateUi("请先选择图片形状");
+    renderPreview();
+    return;
+  }
   const files = Array.from(event.target.files).filter((file) => IMAGE_TYPES.has(file.type));
   if (!files.length) return;
   clearRendered();
@@ -731,6 +738,10 @@ function getSelectedProductShapeLabel() {
 
 function hasSelectedProductShape() {
   return Boolean(getSelectedProductShape());
+}
+
+function isWaitingForProductShape() {
+  return state.fileItems.length > 0 && !hasSelectedProductShape();
 }
 
 function applyProductShapeToLayouts(shape) {
@@ -1965,9 +1976,18 @@ function updateUi(status) {
   const hasFiles = state.files.length > 0;
   const selectedCount = getSelectedProductItems().length;
   const hasShape = hasSelectedProductShape();
+  const waitingForShape = hasFiles && !hasShape;
+  const controlsLocked = waitingForShape || state.processing;
   const total = selectedCount * getActiveBackgroundPresets().length;
-  document.querySelector("#renderBtn").disabled = !selectedCount || !hasShape || !getActiveBackgroundPresets().length || state.processing;
-  document.querySelector("#downloadBtn").disabled = !state.rendered.length || state.processing;
+  document.querySelector("#renderBtn").disabled = !selectedCount || !hasShape || !getActiveBackgroundPresets().length || controlsLocked;
+  document.querySelector("#downloadBtn").disabled = !state.rendered.length || controlsLocked;
+  ["productInput", "folderInput", "backgroundUpload", "backgroundFolderUpload", "size", "depth", "badge", "badgeSize"].forEach((id) => {
+    const control = document.querySelector(`#${id}`);
+    if (control) control.disabled = controlsLocked;
+  });
+  document.querySelector("#productUploadField")?.classList.toggle("field--disabled", controlsLocked);
+  document.querySelector("#backgroundUploadField")?.classList.toggle("field--disabled", controlsLocked);
+  document.querySelector(".render-controls--left")?.classList.toggle("field--disabled", controlsLocked);
   document.querySelector("#statusTitle").textContent =
     status || (hasFiles ? (hasShape ? (selectedCount ? "已上传图片，可以生成" : "请至少勾选一张上传图片") : "已上传图片，请先选择图片形状") : "等待上传图片");
   document.querySelector("#countPill").textContent = `${total} 张成品`;
@@ -1985,8 +2005,9 @@ function updateUi(status) {
 function paintBackgroundLibrary() {
   const library = document.querySelector("#backgroundLibrary");
   if (!library) return;
+  const locked = isWaitingForProductShape() || state.processing;
   if (!state.userBackgrounds.length) {
-    library.innerHTML = `<p class="muted">还没有上传背景。可以上传单张，也可以上传一个背景文件夹。</p>`;
+    library.innerHTML = `<p class="muted">${isWaitingForProductShape() ? "请先选择图片形状，再上传或配置背景。" : "还没有上传背景。可以上传单张，也可以上传一个背景文件夹。"}</p>`;
     return;
   }
 
@@ -1996,15 +2017,15 @@ function paintBackgroundLibrary() {
       const layoutMode = getBackgroundLayoutMode(background);
       const shapeLabel = getSelectedProductShapeLabel();
       return `
-        <div class="background-row ${isFocused ? "background-row--active" : ""}" data-background-id="${background.id}">
+        <div class="background-row ${isFocused ? "background-row--active" : ""} ${locked ? "background-row--disabled" : ""}" data-background-id="${background.id}">
           <label class="background-check">
-            <input type="checkbox" ${background.selected ? "checked" : ""} />
+            <input type="checkbox" ${background.selected ? "checked" : ""} ${locked ? "disabled" : ""} />
             <img src="${background.url}" alt="${background.name}" />
           </label>
-          <input class="background-name" type="text" value="${escapeHtml(background.name)}" aria-label="Background ${index + 1} name" />
-          <button class="remove-background" title="删除背景" type="button">×</button>
+          <input class="background-name" type="text" value="${escapeHtml(background.name)}" aria-label="Background ${index + 1} name" ${locked ? "disabled" : ""} />
+          <button class="remove-background" title="删除背景" type="button" ${locked ? "disabled" : ""}>×</button>
           <div class="background-layout">
-            <select class="background-layout-mode" aria-label="Background ${index + 1} layout mode">
+            <select class="background-layout-mode" aria-label="Background ${index + 1} layout mode" ${locked ? "disabled" : ""}>
               <option value="gallery" ${layoutMode === "gallery" ? "selected" : ""}>固定：主图 + 多角度小图</option>
               <option value="hero" ${layoutMode === "hero" ? "selected" : ""}>固定：单张高级主图</option>
               <option value="duo" ${layoutMode === "duo" ? "selected" : ""}>固定：主图 + 侧角特写</option>
@@ -2029,6 +2050,7 @@ function paintBackgroundLibrary() {
     const id = row.dataset.backgroundId;
     const item = state.userBackgrounds.find((background) => background.id === id);
     row.addEventListener("click", (event) => {
+      if (locked) return;
       if (event.target.closest("select, .background-name, .remove-background")) return;
       if (state.activeBackgroundId === id) return;
       setFocusedBackground(id);
@@ -2036,6 +2058,7 @@ function paintBackgroundLibrary() {
       renderPreview();
     });
     row.querySelector("input[type='checkbox']").addEventListener("change", (event) => {
+      if (locked) return;
       setFocusedBackground(id);
       item.selected = event.target.checked;
       clearRendered();
@@ -2043,15 +2066,18 @@ function paintBackgroundLibrary() {
       renderPreview();
     });
     row.querySelector(".background-name").addEventListener("focus", () => {
+      if (locked) return;
       setFocusedBackground(id);
       row.classList.add("background-row--active");
     });
     row.querySelector(".background-name").addEventListener("input", (event) => {
+      if (locked) return;
       item.name = event.target.value.trim() || "未命名背景";
       clearRendered();
       updateUi("背景名称已更新，可以重新生成");
     });
     row.querySelector(".background-layout-mode").addEventListener("change", (event) => {
+      if (locked) return;
       setFocusedBackground(id);
       item.layoutMode = event.target.value;
       clearRendered();
@@ -2059,6 +2085,7 @@ function paintBackgroundLibrary() {
       renderPreview();
     });
     row.querySelector(".remove-background").addEventListener("click", () => {
+      if (locked) return;
       if (item.url) URL.revokeObjectURL(item.url);
       const wasFocused = state.activeBackgroundId === id;
       releaseDecodedImage(item.image);
@@ -2079,9 +2106,10 @@ function paintProductFileList() {
   if (!list || !count || !selectAllButton || !clearButton) return;
 
   const selectedCount = getSelectedProductItems().length;
+  const locked = isWaitingForProductShape();
   count.textContent = `${selectedCount} / ${state.fileItems.length}`;
-  selectAllButton.disabled = !state.fileItems.length || state.processing;
-  clearButton.disabled = !state.fileItems.length || state.processing;
+  selectAllButton.disabled = !state.fileItems.length || state.processing || locked;
+  clearButton.disabled = !state.fileItems.length || state.processing || locked;
   selectAllButton.textContent = selectedCount === state.fileItems.length && state.fileItems.length ? "已全选" : "全选";
 
   if (!state.fileItems.length) {
@@ -2092,13 +2120,13 @@ function paintProductFileList() {
   list.innerHTML = state.fileItems
     .map(
       (item) => `
-        <div class="product-file-row ${item.selected ? "product-file-row--selected" : ""}">
+        <div class="product-file-row ${item.selected ? "product-file-row--selected" : ""} ${locked ? "product-file-row--disabled" : ""}">
           <label class="product-file-pick">
-            <input type="checkbox" data-product-file-id="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} ${state.processing ? "disabled" : ""} />
+            <input type="checkbox" data-product-file-id="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} ${state.processing || locked ? "disabled" : ""} />
             <img src="${item.url}" alt="${escapeHtml(item.file.name)}" loading="lazy" decoding="async" />
             <span title="${escapeHtml(item.file.webkitRelativePath || item.file.name)}">${escapeHtml(item.file.name)}</span>
           </label>
-          <button class="product-file-remove" type="button" data-product-file-remove-id="${escapeHtml(item.id)}" ${state.processing ? "disabled" : ""} title="删除这张图片" aria-label="删除 ${escapeHtml(item.file.name)}">×</button>
+          <button class="product-file-remove" type="button" data-product-file-remove-id="${escapeHtml(item.id)}" ${state.processing || locked ? "disabled" : ""} title="删除这张图片" aria-label="删除 ${escapeHtml(item.file.name)}">×</button>
         </div>
       `,
     )
@@ -2427,12 +2455,13 @@ function paintPreview(url) {
 
 function paintFileList(doneCount) {
   const list = document.querySelector("#fileList");
+  const locked = isWaitingForProductShape() || state.processing;
   if (state.rendered.length) {
     list.innerHTML = state.rendered
       .map((item, index) => {
         const active = index === state.selectedRenderedIndex;
         return `
-          <button class="file-row file-row--button ${active ? "file-row--active" : ""}" data-rendered-index="${index}">
+          <button class="file-row file-row--button ${active ? "file-row--active" : ""} ${locked ? "file-row--muted" : ""}" data-rendered-index="${index}" ${locked ? "disabled" : ""}>
             <img src="${item.url}" alt="${item.name}" loading="lazy" decoding="async" />
             <span title="${item.name}">${item.backgroundLabel}｜${item.file.name}</span>
           </button>
@@ -2441,6 +2470,7 @@ function paintFileList(doneCount) {
       .join("");
     list.querySelectorAll("[data-rendered-index]").forEach((button) => {
       button.addEventListener("click", () => {
+        if (locked) return;
         const index = Number(button.dataset.renderedIndex);
         state.selectedRenderedIndex = index;
         paintPreview(state.rendered[index].url);
