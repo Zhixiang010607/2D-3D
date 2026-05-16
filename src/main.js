@@ -23,8 +23,8 @@ const state = {
   productShape: "",
   options: {
     backgroundFit: "cover",
-    size: 2400,
-    depth: 4,
+    size: 3600,
+    depth: 7,
     edgeColor: "#8f9188",
     shadow: 42,
     shine: 48,
@@ -232,14 +232,14 @@ app.innerHTML = `
           </div>
 
           <div class="field">
-            <label for="size">输出尺寸 <b id="sizeValue">2400</b> × <b id="sizeValueY">2400</b> px</label>
-            <input id="size" type="range" min="800" max="8000" step="200" value="2400" />
+            <label for="size">输出尺寸 <b id="sizeValue">3600</b> × <b id="sizeValueY">3600</b> px</label>
+            <input id="size" type="range" min="800" max="8000" step="200" value="3600" />
             <p class="field-hint">批量建议 2400-3600；超清可到 8000，生成会明显变慢。</p>
           </div>
 
           <div class="field">
-            <label for="depth">边缘厚度 <b id="depthValue">4</b></label>
-            <input id="depth" type="range" min="0" max="90" step="2" value="4" />
+            <label for="depth">边缘厚度 <b id="depthValue">7</b></label>
+            <input id="depth" type="range" min="0" max="90" step="1" value="7" />
           </div>
 
           <label class="toggle">
