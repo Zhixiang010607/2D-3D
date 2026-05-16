@@ -166,10 +166,6 @@ app.innerHTML = `
             <span data-icon="sparkles"></span>
             生成 3D 效果
           </button>
-          <button id="sampleBtn" class="secondary">
-            <span data-icon="refresh"></span>
-            载入示例
-          </button>
           <button id="downloadBtn" class="secondary" disabled>
             <span data-icon="download"></span>
             下载 ZIP
@@ -318,7 +314,6 @@ function fillBackgrounds() {
 function bindEvents() {
   document.querySelector("#folderInput").addEventListener("change", handleFolder);
   document.querySelector("#renderBtn").addEventListener("click", renderAll);
-  document.querySelector("#sampleBtn").addEventListener("click", loadSamples);
   document.querySelector("#downloadBtn").addEventListener("click", downloadZip);
   document.querySelector("#backgroundUpload").addEventListener("change", handleBackgroundFiles);
   document.querySelector("#backgroundFolderUpload").addEventListener("change", handleBackgroundFiles);
@@ -390,63 +385,6 @@ async function handleBackgroundFiles(event) {
   paintBackgroundLibrary();
   updateUi(`已载入 ${files.length} 张背景图`);
   renderPreview();
-}
-
-async function loadSamples() {
-  const samplePaths = [
-    "./2d/original-463AA3AD-D13A-456B-B4EF-34359D5E7E51.jpeg",
-    "./2d/original-4E0F0D73-27E9-406B-9AE0-3FE3C48C4E94.jpeg",
-    "./2d/original-7154C971-7ACE-4B0C-9C1C-D4C7EAB36197.jpeg",
-    "./2d/original-7FCA9A28-7F1D-474A-BF49-827ED5E7510B.jpeg",
-    "./2d/original-91A7420E-9A0A-4AA5-9C42-F562FD92E016.jpeg",
-    "./2d/original-CD2BC408-5860-4AC9-9811-F6D4AC54EBC4.jpeg",
-    "./2d/original-F135A8AE-84BF-41CF-9BF0-9F53DF1027A7.jpeg",
-    "./2d/original-F2B12A9D-A02F-4EFB-9BCA-945A27CEBEBD.jpeg",
-  ];
-  const files = [];
-
-  for (const path of samplePaths) {
-    const response = await fetch(path);
-    const blob = await response.blob();
-    files.push(new File([blob], path.split("/").pop(), { type: blob.type || "image/jpeg" }));
-  }
-
-  state.files = files;
-  state.productShape = "circle";
-  await ensureSampleBackground();
-  applyProductShapeToLayouts("circle");
-  clearRendered();
-  revokePreview();
-  updateUi(`已载入 ${files.length} 张示例，已自动选择圆形和第一个背景`);
-  await renderPreview();
-}
-
-async function ensureSampleBackground() {
-  if (state.userBackgrounds.length) {
-    state.userBackgrounds.forEach((background, index) => {
-      background.selected = index === 0;
-    });
-    state.activeBackgroundId = state.userBackgrounds[0].id;
-    return;
-  }
-
-  const path = "./assets/background/original-39ECECE6-7A86-4C73-A2D0-8B6F79ABC825.jpeg";
-  const response = await fetch(path);
-  const blob = await response.blob();
-  const file = new File([blob], "示例背景-01.jpeg", { type: blob.type || "image/jpeg" });
-  const image = await loadImage(file);
-  const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-  state.userBackgrounds.push({
-    id,
-    file,
-    image,
-    url: URL.createObjectURL(file),
-    name: "示例背景-01",
-    selected: true,
-    layoutMode: "gallery",
-    freeLayout: createDefaultPlacement("circle"),
-  });
-  state.activeBackgroundId = id;
 }
 
 async function renderPreview() {
