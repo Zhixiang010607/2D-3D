@@ -274,6 +274,10 @@ app.innerHTML = `
             <span data-icon="sparkles"></span>
             生成 3D 效果
           </button>
+          <button id="clearRenderedBtn" class="secondary" disabled>
+            <span data-icon="refresh"></span>
+            清空 3D 效果
+          </button>
           <button id="downloadBtn" class="secondary" disabled>
             <span data-icon="download"></span>
             下载 ZIP
@@ -289,6 +293,7 @@ app.innerHTML = `
           </div>
           <div class="product-file-actions">
             <button id="selectAllProducts" class="mini-button" type="button" disabled>全选</button>
+            <button id="deselectAllProducts" class="mini-button" type="button" disabled>全部不勾选</button>
             <button id="clearProductFiles" class="mini-button mini-button--danger" type="button" disabled>清空上传图片</button>
           </div>
           <div id="productFileList" class="product-file-list"></div>
@@ -340,7 +345,9 @@ function bindEvents() {
   document.querySelector("#folderInput").addEventListener("change", handleProductFiles);
   document.querySelector("#renderBtn").addEventListener("click", renderAll);
   document.querySelector("#downloadBtn").addEventListener("click", downloadZip);
+  document.querySelector("#clearRenderedBtn").addEventListener("click", clearRenderedResults);
   document.querySelector("#selectAllProducts").addEventListener("click", () => setAllProductFilesSelected(true));
+  document.querySelector("#deselectAllProducts").addEventListener("click", () => setAllProductFilesSelected(false));
   document.querySelector("#clearProductFiles").addEventListener("click", clearProductFiles);
   document.querySelector("#backgroundUpload").addEventListener("change", handleBackgroundFiles);
   document.querySelector("#backgroundFolderUpload").addEventListener("change", handleBackgroundFiles);
@@ -725,6 +732,14 @@ function clearRendered() {
   });
   state.rendered = [];
   state.selectedRenderedIndex = -1;
+}
+
+function clearRenderedResults() {
+  if (state.processing) return;
+  clearRendered();
+  revokePreview();
+  updateUi("已清空 3D 效果，可以继续调整占位");
+  renderPreview();
 }
 
 function getActiveBackgroundPresets() {
@@ -2779,6 +2794,7 @@ function updateUi(status) {
   const controlsLocked = waitingForShape || state.processing;
   const total = selectedCount * getActiveBackgroundPresets().length;
   document.querySelector("#renderBtn").disabled = !selectedCount || !hasShape || !getActiveBackgroundPresets().length || controlsLocked;
+  document.querySelector("#clearRenderedBtn").disabled = !state.rendered.length || controlsLocked;
   document.querySelector("#downloadBtn").disabled = !state.rendered.length || controlsLocked;
   ["productInput", "folderInput", "backgroundUpload", "backgroundFolderUpload", "size", "depth", "badge", "badgeSize"].forEach((id) => {
     const control = document.querySelector(`#${id}`);
@@ -2904,15 +2920,18 @@ function paintProductFileList() {
   const list = document.querySelector("#productFileList");
   const count = document.querySelector("#productFileCount");
   const selectAllButton = document.querySelector("#selectAllProducts");
+  const deselectAllButton = document.querySelector("#deselectAllProducts");
   const clearButton = document.querySelector("#clearProductFiles");
-  if (!list || !count || !selectAllButton || !clearButton) return;
+  if (!list || !count || !selectAllButton || !deselectAllButton || !clearButton) return;
 
   const selectedCount = getSelectedProductItems().length;
   const locked = isWaitingForProductShape();
   count.textContent = `${selectedCount} / ${state.fileItems.length}`;
   selectAllButton.disabled = !state.fileItems.length || state.processing || locked;
+  deselectAllButton.disabled = !state.fileItems.length || state.processing || locked;
   clearButton.disabled = !state.fileItems.length || state.processing || locked;
   selectAllButton.textContent = selectedCount === state.fileItems.length && state.fileItems.length ? "已全选" : "全选";
+  deselectAllButton.textContent = selectedCount === 0 && state.fileItems.length ? "已全不选" : "全部不勾选";
 
   if (!state.fileItems.length) {
     list.innerHTML = `<p class="muted">还没有上传产品图片。</p>`;
@@ -3078,7 +3097,7 @@ function paintPlacementStage(backgroundItem) {
           <span>${layout.shape === "polygon" ? "顶点微调" : "四角微调"}</span>
           <input id="placementFineTune" type="checkbox" ${layout.fineTune ? "checked" : ""} />
         </label>
-        <label class="placement-control ${fineTuneActive ? "" : "field--hidden"}">
+        <label class="placement-control ${fineTuneEnabled ? "" : "field--hidden"}">
           <span>微调线色</span>
           <select id="placementTuneLineColor" class="number-control">
             <option value="black" ${layout.tuneLineColor === "black" ? "selected" : ""}>黑色</option>
