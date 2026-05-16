@@ -893,6 +893,10 @@ input[type="range"] {
   padding-right: 4px;
 }
 
+.generated-files-field .file-list {
+  max-height: 210px;
+}
+
 .file-row {
   min-width: 0;
   display: flex;
