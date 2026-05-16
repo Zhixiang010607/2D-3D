@@ -37,6 +37,8 @@ const state = {
   },
 };
 
+const imageContentRectCache = new WeakMap();
+
 const productShapes = {
   circle: "圆形",
   ellipse: "椭圆",
@@ -1155,22 +1157,84 @@ function quadTextureAspect(layout) {
   return width / height;
 }
 
-function coverSourceRect(image, targetAspect) {
-  const imageAspect = image.width / image.height;
+function getImageContentRect(image) {
+  if (imageContentRectCache.has(image)) return imageContentRectCache.get(image);
+  const fallback = { x: 0, y: 0, width: image.width, height: image.height };
+  const sampleMax = 360;
+  const scale = Math.min(1, sampleMax / Math.max(image.width, image.height));
+  const sampleWidth = Math.max(1, Math.round(image.width * scale));
+  const sampleHeight = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = sampleWidth;
+  canvas.height = sampleHeight;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    imageContentRectCache.set(image, fallback);
+    return fallback;
+  }
+  ctx.drawImage(image, 0, 0, sampleWidth, sampleHeight);
+  let pixels;
+  try {
+    pixels = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
+  } catch {
+    imageContentRectCache.set(image, fallback);
+    return fallback;
+  }
+
+  let minX = sampleWidth;
+  let minY = sampleHeight;
+  let maxX = -1;
+  let maxY = -1;
+  let transparentCount = 0;
+  for (let y = 0; y < sampleHeight; y += 1) {
+    for (let x = 0; x < sampleWidth; x += 1) {
+      const alpha = pixels[(y * sampleWidth + x) * 4 + 3];
+      if (alpha < 8) {
+        transparentCount += 1;
+        continue;
+      }
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  const hasTransparentPadding = transparentCount > sampleWidth * sampleHeight * 0.01;
+  if (!hasTransparentPadding || maxX < minX || maxY < minY) {
+    imageContentRectCache.set(image, fallback);
+    return fallback;
+  }
+
+  const padding = 1;
+  const rect = {
+    x: clamp((minX - padding) / scale, 0, image.width),
+    y: clamp((minY - padding) / scale, 0, image.height),
+    width: clamp((maxX - minX + 1 + padding * 2) / scale, 1, image.width),
+    height: clamp((maxY - minY + 1 + padding * 2) / scale, 1, image.height),
+  };
+  rect.width = Math.min(rect.width, image.width - rect.x);
+  rect.height = Math.min(rect.height, image.height - rect.y);
+  imageContentRectCache.set(image, rect);
+  return rect;
+}
+
+function coverSourceRect(image, targetAspect, baseRect = getImageContentRect(image)) {
+  const imageAspect = baseRect.width / baseRect.height;
   if (imageAspect > targetAspect) {
-    const width = image.height * targetAspect;
+    const width = baseRect.height * targetAspect;
     return {
-      x: (image.width - width) / 2,
-      y: 0,
+      x: baseRect.x + (baseRect.width - width) / 2,
+      y: baseRect.y,
       width,
-      height: image.height,
+      height: baseRect.height,
     };
   }
-  const height = image.width / targetAspect;
+  const height = baseRect.width / targetAspect;
   return {
-    x: 0,
-    y: (image.height - height) / 2,
-    width: image.width,
+    x: baseRect.x,
+    y: baseRect.y + (baseRect.height - height) / 2,
+    width: baseRect.width,
     height,
   };
 }
@@ -2218,11 +2282,11 @@ function drawFace(ctx, image, view) {
     ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
 
     const coverSize = isRoundProductShape(view) ? 2.04 : 2;
-    const scale = Math.max((rx * coverSize) / image.width, (ry * coverSize) / image.height);
-    const w = image.width * scale;
-    const h = image.height * scale;
+    const targetWidth = rx * coverSize;
+    const targetHeight = ry * coverSize;
+    const sourceRect = coverSourceRect(image, targetWidth / Math.max(1, targetHeight));
     ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-    ctx.drawImage(image, -w / 2, -h / 2, w, h);
+    ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, -targetWidth / 2, -targetHeight / 2, targetWidth, targetHeight);
     ctx.filter = "none";
 
     const shade = ctx.createLinearGradient(-rx, -ry, rx, ry);
