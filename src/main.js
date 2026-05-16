@@ -11,6 +11,7 @@ const BADGE_SHADOW_BLUR_PERCENT = 1.8;
 const BADGE_SHADOW_OFFSET_PERCENT = 0.8;
 const state = {
   files: [],
+  fileItems: [],
   userBackgrounds: [],
   activeBackgroundId: null,
   rendered: [],
@@ -206,6 +207,18 @@ app.innerHTML = `
           <p class="field-hint">选择图片文件夹后必须设置，所有背景都会使用同一种占位形状。</p>
         </div>
 
+        <div class="field product-files-field">
+          <div class="product-files-header">
+            <label>上传图片列表</label>
+            <span id="productFileCount" class="mini-count">0 / 0</span>
+          </div>
+          <div class="product-file-actions">
+            <button id="selectAllProducts" class="mini-button" type="button" disabled>全选</button>
+            <button id="clearProductFiles" class="mini-button mini-button--danger" type="button" disabled>清空上传图片</button>
+          </div>
+          <div id="productFileList" class="product-file-list"></div>
+        </div>
+
         <div class="field">
           <label>背景库</label>
           <div class="background-actions">
@@ -315,6 +328,8 @@ function bindEvents() {
   document.querySelector("#folderInput").addEventListener("change", handleFolder);
   document.querySelector("#renderBtn").addEventListener("click", renderAll);
   document.querySelector("#downloadBtn").addEventListener("click", downloadZip);
+  document.querySelector("#selectAllProducts").addEventListener("click", () => setAllProductFilesSelected(true));
+  document.querySelector("#clearProductFiles").addEventListener("click", clearProductFiles);
   document.querySelector("#backgroundUpload").addEventListener("change", handleBackgroundFiles);
   document.querySelector("#backgroundFolderUpload").addEventListener("change", handleBackgroundFiles);
   document.querySelector("#productShape").addEventListener("change", handleProductShape);
@@ -352,14 +367,58 @@ function handleProductShape(event) {
 
 function handleFolder(event) {
   clearRendered();
+  revokeProductFileUrls();
   state.files = Array.from(event.target.files)
     .filter((file) => IMAGE_TYPES.has(file.type))
     .sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath));
+  state.fileItems = state.files.map((file, index) => createProductFileItem(file, index));
   state.rendered = [];
   state.productShape = "";
   revokePreview();
   updateUi(`已选择 ${state.files.length} 张图片，请选择图片形状`);
   renderPreview();
+}
+
+function createProductFileItem(file, index) {
+  return {
+    id: `${file.webkitRelativePath || file.name}-${file.size}-${file.lastModified}-${index}`,
+    file,
+    selected: true,
+    url: URL.createObjectURL(file),
+  };
+}
+
+function getSelectedProductItems() {
+  return state.fileItems.filter((item) => item.selected);
+}
+
+function setAllProductFilesSelected(selected) {
+  if (!state.fileItems.length) return;
+  state.fileItems.forEach((item) => {
+    item.selected = selected;
+  });
+  clearRendered();
+  updateUi(selected ? "已勾选全部上传图片" : "已取消全部上传图片");
+  renderPreview();
+}
+
+function clearProductFiles() {
+  if (!state.fileItems.length) return;
+  clearRendered();
+  revokeProductFileUrls();
+  state.files = [];
+  state.fileItems = [];
+  state.productShape = "";
+  document.querySelector("#folderInput").value = "";
+  revokePreview();
+  updateUi("已清空上传图片");
+  renderPreview();
+}
+
+function revokeProductFileUrls() {
+  state.fileItems.forEach((item) => {
+    if (item.url) URL.revokeObjectURL(item.url);
+  });
 }
 
 async function handleBackgroundFiles(event) {
@@ -393,36 +452,43 @@ async function renderPreview() {
     paintShapeRequiredStage();
     return;
   }
+  const selectedItems = getSelectedProductItems();
+  if (state.files.length && !selectedItems.length) {
+    paintNoSelectedProductsStage();
+    return;
+  }
   const focusedBackground = getFocusedBackground();
   if (focusedBackground) {
     paintPlacementStage(focusedBackground);
     return;
   }
-  if (!state.files.length || !getActiveBackgroundPresets().length) {
+  if (!selectedItems.length || !getActiveBackgroundPresets().length) {
     paintEmptyStage();
     return;
   }
   const previewBackground = focusedBackground?.selected ? focusedBackground : getActiveBackgroundPresets()[0];
   const previewOptions = { ...state.options, size: Math.min(state.options.size, PREVIEW_MAX_SIZE) };
-  const blob = await renderProduct(state.files[0], previewOptions, previewBackground);
+  const blob = await renderProduct(selectedItems[0].file, previewOptions, previewBackground);
   revokePreview();
   state.previewUrl = URL.createObjectURL(blob);
   paintPreview(state.previewUrl);
 }
 
 async function renderAll() {
-  if (!state.files.length || !hasSelectedProductShape()) return;
+  const selectedItems = getSelectedProductItems();
+  if (!selectedItems.length || !hasSelectedProductShape()) return;
   state.processing = true;
   clearRendered();
   updateUi("正在生成 3D 效果图...");
   const activeBackgrounds = getActiveBackgroundPresets();
-  const total = state.files.length * activeBackgrounds.length;
+  const total = selectedItems.length * activeBackgrounds.length;
   const renderOptions = { ...state.options };
   const renderCanvas = document.createElement("canvas");
   let done = 0;
 
   try {
-    for (const file of state.files) {
+    for (const fileItem of selectedItems) {
+      const file = fileItem.file;
       const source = await loadImage(file);
       try {
         for (const backgroundItem of activeBackgrounds) {
@@ -1856,22 +1922,25 @@ function updateProgress(done, total) {
   document.querySelector("#statusTitle").textContent = `正在处理 ${done} / ${total}`;
   document.querySelector("#countPill").textContent = `${total} 张图片`;
   paintFileList(done);
+  paintProductFileList();
 }
 
 function updateUi(status) {
   const hasFiles = state.files.length > 0;
+  const selectedCount = getSelectedProductItems().length;
   const hasShape = hasSelectedProductShape();
-  const total = state.files.length * getActiveBackgroundPresets().length;
-  document.querySelector("#renderBtn").disabled = !hasFiles || !hasShape || !getActiveBackgroundPresets().length || state.processing;
+  const total = selectedCount * getActiveBackgroundPresets().length;
+  document.querySelector("#renderBtn").disabled = !selectedCount || !hasShape || !getActiveBackgroundPresets().length || state.processing;
   document.querySelector("#downloadBtn").disabled = !state.rendered.length || state.processing;
   document.querySelector("#statusTitle").textContent =
-    status || (hasFiles ? (hasShape ? "已选择文件夹，可以生成" : "已选择文件夹，请先选择图片形状") : "等待选择文件夹");
-  document.querySelector("#countPill").textContent = `${total || state.files.length} 张成品`;
+    status || (hasFiles ? (hasShape ? (selectedCount ? "已选择文件夹，可以生成" : "请至少勾选一张上传图片") : "已选择文件夹，请先选择图片形状") : "等待选择文件夹");
+  document.querySelector("#countPill").textContent = `${total} 张成品`;
   document.querySelector("#renderBtn").innerHTML = state.processing
     ? `<span data-icon="loader" class="spin"></span> 正在生成`
     : `<span data-icon="sparkles"></span> 生成 3D 效果`;
   renderIcons();
   paintBackgroundLibrary();
+  paintProductFileList();
   syncOptionLabels();
   syncProductShapeControl();
   paintFileList(state.rendered.length);
@@ -1966,6 +2035,48 @@ function paintBackgroundLibrary() {
   });
 }
 
+function paintProductFileList() {
+  const list = document.querySelector("#productFileList");
+  const count = document.querySelector("#productFileCount");
+  const selectAllButton = document.querySelector("#selectAllProducts");
+  const clearButton = document.querySelector("#clearProductFiles");
+  if (!list || !count || !selectAllButton || !clearButton) return;
+
+  const selectedCount = getSelectedProductItems().length;
+  count.textContent = `${selectedCount} / ${state.fileItems.length}`;
+  selectAllButton.disabled = !state.fileItems.length || state.processing;
+  clearButton.disabled = !state.fileItems.length || state.processing;
+  selectAllButton.textContent = selectedCount === state.fileItems.length && state.fileItems.length ? "已全选" : "全选";
+
+  if (!state.fileItems.length) {
+    list.innerHTML = `<p class="muted">还没有上传产品图片。</p>`;
+    return;
+  }
+
+  list.innerHTML = state.fileItems
+    .map(
+      (item) => `
+        <label class="product-file-row ${item.selected ? "product-file-row--selected" : ""}">
+          <input type="checkbox" data-product-file-id="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} ${state.processing ? "disabled" : ""} />
+          <img src="${item.url}" alt="${escapeHtml(item.file.name)}" loading="lazy" decoding="async" />
+          <span title="${escapeHtml(item.file.webkitRelativePath || item.file.name)}">${escapeHtml(item.file.name)}</span>
+        </label>
+      `,
+    )
+    .join("");
+
+  list.querySelectorAll("[data-product-file-id]").forEach((checkbox) => {
+    checkbox.addEventListener("change", (event) => {
+      const item = state.fileItems.find((fileItem) => fileItem.id === event.target.dataset.productFileId);
+      if (!item) return;
+      item.selected = event.target.checked;
+      clearRendered();
+      updateUi(item.selected ? "已勾选这张图片" : "已取消这张图片");
+      renderPreview();
+    });
+  });
+}
+
 function escapeHtml(value) {
   return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 }
@@ -1981,7 +2092,7 @@ function syncProductShapeControl() {
   const select = document.querySelector("#productShape");
   const field = document.querySelector("#productShapeField");
   if (!select || !field) return;
-  const enabled = state.files.length > 0 && !state.processing;
+  const enabled = state.fileItems.length > 0 && !state.processing;
   select.disabled = !enabled;
   select.value = getSelectedProductShape();
   field.classList.toggle("field--disabled", !enabled);
@@ -2008,6 +2119,19 @@ function paintEmptyStage() {
     <div class="empty">
       <span data-icon="image"></span>
       <p>选择含 2D 图片的文件夹后，这里会显示第一张转换预览。</p>
+    </div>
+  `;
+  renderIcons();
+}
+
+function paintNoSelectedProductsStage() {
+  const stage = document.querySelector("#previewStage");
+  stage.style.setProperty("--stage-bg", "#ffffff");
+  stage.classList.remove("stage--checker", "stage--placement");
+  stage.innerHTML = `
+    <div class="empty">
+      <span data-icon="image"></span>
+      <p>已上传图片。请先在左侧上传图片列表里勾选至少一张需要生成 3D 的图片。</p>
     </div>
   `;
   renderIcons();
@@ -2281,23 +2405,7 @@ function paintFileList(doneCount) {
     return;
   }
 
-  if (!state.files.length) {
-    list.innerHTML = `<p class="muted">还没有选择文件夹。</p>`;
-    return;
-  }
-
-  list.innerHTML = state.files
-    .map((file, index) => {
-      const done = index < doneCount;
-      return `
-        <div class="file-row ${done ? "file-row--done" : ""}">
-          <span data-icon="${done ? "check" : "image"}"></span>
-          <span title="${file.webkitRelativePath || file.name}">${file.name}</span>
-        </div>
-      `;
-    })
-    .join("");
-  renderIcons();
+  list.innerHTML = `<p class="muted">生成后，这里会显示可点击预览的成品图。</p>`;
 }
 
 function revokePreview() {
