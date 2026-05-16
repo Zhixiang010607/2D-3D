@@ -12,6 +12,7 @@ const BADGE_SHADOW_OFFSET_PERCENT = 0.8;
 const state = {
   files: [],
   fileItems: [],
+  productFileSequence: 0,
   userBackgrounds: [],
   activeBackgroundId: null,
   rendered: [],
@@ -161,7 +162,7 @@ app.innerHTML = `
       <div class="hero__copy">
         <p class="eyebrow">Batch Product Renderer</p>
         <h1>严宇杰老板专属小工具</h1>
-        <p class="subcopy">选择本地文件夹后，工具会把里面的图片生成圆形厚边、清晰高光和自然投影的 3D 展示图，并打包成 ZIP。</p>
+        <p class="subcopy">上传本地图片或文件夹后，工具会把里面的图片生成圆形厚边、清晰高光和自然投影的 3D 展示图，并打包成 ZIP。</p>
         <div class="actions">
           <button id="renderBtn" class="secondary" disabled>
             <span data-icon="sparkles"></span>
@@ -187,12 +188,19 @@ app.innerHTML = `
 
         <div class="field">
           <label>产品图片</label>
-          <label class="primary panel-file-button">
-            <span data-icon="folder"></span>
-            <input id="folderInput" type="file" accept="image/*" webkitdirectory multiple />
-            选择图片文件夹
-          </label>
-          <p class="field-hint">先选择本地 2D 图片文件夹，再设置这一批图片的统一形状。</p>
+          <div class="product-upload-actions">
+            <label class="primary panel-file-button">
+              <span data-icon="image"></span>
+              <input id="productInput" type="file" accept="image/*" multiple />
+              上传图片
+            </label>
+            <label class="primary panel-file-button">
+              <span data-icon="folder"></span>
+              <input id="folderInput" type="file" accept="image/*" webkitdirectory multiple />
+              上传文件夹
+            </label>
+          </div>
+          <p class="field-hint">可以单张/多张上传，也可以上传文件夹；重复上传会追加保留。</p>
         </div>
 
         <div id="productShapeField" class="field field--disabled">
@@ -204,7 +212,7 @@ app.innerHTML = `
             <option value="polygon">正多边形</option>
             <option value="rectangle">矩形</option>
           </select>
-          <p class="field-hint">选择图片文件夹后必须设置，所有背景都会使用同一种占位形状。</p>
+          <p class="field-hint">上传产品图片后必须设置，所有背景都会使用同一种占位形状。</p>
         </div>
 
         <div class="field">
@@ -233,14 +241,14 @@ app.innerHTML = `
         <div class="preview__toolbar">
           <div>
             <p class="eyebrow">Preview</p>
-            <h2 id="statusTitle">等待选择文件夹</h2>
+            <h2 id="statusTitle">等待上传图片</h2>
           </div>
           <span id="countPill" class="pill">0 张图片</span>
         </div>
         <div id="previewStage" class="stage">
           <div class="empty">
             <span data-icon="image"></span>
-            <p>选择含 2D 图片的文件夹后，这里会显示第一张转换预览。</p>
+            <p>上传 2D 图片后，这里会显示第一张转换预览。</p>
           </div>
         </div>
       </section>
@@ -325,7 +333,8 @@ function fillBackgrounds() {
 }
 
 function bindEvents() {
-  document.querySelector("#folderInput").addEventListener("change", handleFolder);
+  document.querySelector("#productInput").addEventListener("change", handleProductFiles);
+  document.querySelector("#folderInput").addEventListener("change", handleProductFiles);
   document.querySelector("#renderBtn").addEventListener("click", renderAll);
   document.querySelector("#downloadBtn").addEventListener("click", downloadZip);
   document.querySelector("#selectAllProducts").addEventListener("click", () => setAllProductFilesSelected(true));
@@ -365,27 +374,36 @@ function handleProductShape(event) {
   renderPreview();
 }
 
-function handleFolder(event) {
-  clearRendered();
-  revokeProductFileUrls();
-  state.files = Array.from(event.target.files)
+function handleProductFiles(event) {
+  const files = Array.from(event.target.files)
     .filter((file) => IMAGE_TYPES.has(file.type))
-    .sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath));
-  state.fileItems = state.files.map((file, index) => createProductFileItem(file, index));
-  state.rendered = [];
-  state.productShape = "";
+    .sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name));
+  event.target.value = "";
+  if (!files.length) return;
+  clearRendered();
+  state.fileItems.push(...files.map((file) => createProductFileItem(file)));
+  syncProductFiles();
   revokePreview();
-  updateUi(`已选择 ${state.files.length} 张图片，请选择图片形状`);
+  updateUi(
+    hasSelectedProductShape()
+      ? `已追加 ${files.length} 张图片，当前共 ${state.fileItems.length} 张`
+      : `已追加 ${files.length} 张图片，请选择图片形状`,
+  );
   renderPreview();
 }
 
-function createProductFileItem(file, index) {
+function createProductFileItem(file) {
+  state.productFileSequence += 1;
   return {
-    id: `${file.webkitRelativePath || file.name}-${file.size}-${file.lastModified}-${index}`,
+    id: `product-${Date.now()}-${state.productFileSequence}`,
     file,
     selected: true,
     url: URL.createObjectURL(file),
   };
+}
+
+function syncProductFiles() {
+  state.files = state.fileItems.map((item) => item.file);
 }
 
 function getSelectedProductItems() {
@@ -409,9 +427,28 @@ function clearProductFiles() {
   state.files = [];
   state.fileItems = [];
   state.productShape = "";
+  document.querySelector("#productInput").value = "";
   document.querySelector("#folderInput").value = "";
   revokePreview();
   updateUi("已清空上传图片");
+  renderPreview();
+}
+
+function removeProductFile(id) {
+  if (state.processing) return;
+  const index = state.fileItems.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  const [item] = state.fileItems.splice(index, 1);
+  if (item.url) URL.revokeObjectURL(item.url);
+  syncProductFiles();
+  if (!state.fileItems.length) {
+    state.productShape = "";
+    document.querySelector("#productInput").value = "";
+    document.querySelector("#folderInput").value = "";
+  }
+  clearRendered();
+  revokePreview();
+  updateUi("已删除这张上传图片");
   renderPreview();
 }
 
@@ -1933,7 +1970,7 @@ function updateUi(status) {
   document.querySelector("#renderBtn").disabled = !selectedCount || !hasShape || !getActiveBackgroundPresets().length || state.processing;
   document.querySelector("#downloadBtn").disabled = !state.rendered.length || state.processing;
   document.querySelector("#statusTitle").textContent =
-    status || (hasFiles ? (hasShape ? (selectedCount ? "已选择文件夹，可以生成" : "请至少勾选一张上传图片") : "已选择文件夹，请先选择图片形状") : "等待选择文件夹");
+    status || (hasFiles ? (hasShape ? (selectedCount ? "已上传图片，可以生成" : "请至少勾选一张上传图片") : "已上传图片，请先选择图片形状") : "等待上传图片");
   document.querySelector("#countPill").textContent = `${total} 张成品`;
   document.querySelector("#renderBtn").innerHTML = state.processing
     ? `<span data-icon="loader" class="spin"></span> 正在生成`
@@ -2056,11 +2093,14 @@ function paintProductFileList() {
   list.innerHTML = state.fileItems
     .map(
       (item) => `
-        <label class="product-file-row ${item.selected ? "product-file-row--selected" : ""}">
-          <input type="checkbox" data-product-file-id="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} ${state.processing ? "disabled" : ""} />
-          <img src="${item.url}" alt="${escapeHtml(item.file.name)}" loading="lazy" decoding="async" />
-          <span title="${escapeHtml(item.file.webkitRelativePath || item.file.name)}">${escapeHtml(item.file.name)}</span>
-        </label>
+        <div class="product-file-row ${item.selected ? "product-file-row--selected" : ""}">
+          <label class="product-file-pick">
+            <input type="checkbox" data-product-file-id="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} ${state.processing ? "disabled" : ""} />
+            <img src="${item.url}" alt="${escapeHtml(item.file.name)}" loading="lazy" decoding="async" />
+            <span title="${escapeHtml(item.file.webkitRelativePath || item.file.name)}">${escapeHtml(item.file.name)}</span>
+          </label>
+          <button class="product-file-remove" type="button" data-product-file-remove-id="${escapeHtml(item.id)}" ${state.processing ? "disabled" : ""} title="删除这张图片" aria-label="删除 ${escapeHtml(item.file.name)}">×</button>
+        </div>
       `,
     )
     .join("");
@@ -2073,6 +2113,12 @@ function paintProductFileList() {
       clearRendered();
       updateUi(item.selected ? "已勾选这张图片" : "已取消这张图片");
       renderPreview();
+    });
+  });
+
+  list.querySelectorAll("[data-product-file-remove-id]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      removeProductFile(event.currentTarget.dataset.productFileRemoveId);
     });
   });
 }
@@ -2105,7 +2151,7 @@ function paintShapeRequiredStage() {
   stage.innerHTML = `
     <div class="empty">
       <span data-icon="sliders"></span>
-      <p>已载入图片文件夹。请先在左侧选择图片形状，背景占位设置会自动切换成对应形状。</p>
+      <p>已上传产品图片。请先在左侧选择图片形状，背景占位设置会自动切换成对应形状。</p>
     </div>
   `;
   renderIcons();
@@ -2118,7 +2164,7 @@ function paintEmptyStage() {
   stage.innerHTML = `
     <div class="empty">
       <span data-icon="image"></span>
-      <p>选择含 2D 图片的文件夹后，这里会显示第一张转换预览。</p>
+      <p>上传 2D 图片后，这里会显示第一张转换预览。</p>
     </div>
   `;
   renderIcons();
