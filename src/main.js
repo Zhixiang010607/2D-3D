@@ -162,7 +162,7 @@ app.innerHTML = `
       <div class="hero__copy">
         <p class="eyebrow">Batch Product Renderer</p>
         <h1>严宇杰老板专属小工具</h1>
-        <p class="subcopy">上传本地图片或文件夹后，工具会把里面的图片生成圆形厚边、清晰高光和自然投影的 3D 展示图，并打包成 ZIP。</p>
+        <p class="subcopy">上传本地产品图和背景后，按选定形状批量生成高清 3D 商品展示图，并一键打包下载 ZIP。</p>
       </div>
       <div class="hero__visual">
         <img src="./3d/661.jpeg" alt="3D product reference" />
