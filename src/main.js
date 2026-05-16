@@ -283,8 +283,8 @@ app.innerHTML = `
       </section>
 
       <section class="queue">
-        <div class="field product-files-field">
-          <div class="product-files-header">
+        <div class="queue-section product-files-field">
+          <div class="queue-section-header">
             <label>上传图片列表</label>
             <span id="productFileCount" class="mini-count">0 / 0</span>
           </div>
@@ -295,18 +295,19 @@ app.innerHTML = `
           <div id="productFileList" class="product-file-list"></div>
         </div>
 
-        <div class="background-library-field">
-          <div class="product-files-header">
+        <div class="queue-section background-library-field">
+          <div class="queue-section-header">
             <label>背景库图片</label>
           </div>
           <div id="backgroundLibrary" class="background-library"></div>
         </div>
 
-        <div class="panel__title">
-          <span data-icon="archive"></span>
-          <h2>生成图列表</h2>
+        <div class="queue-section generated-files-field">
+          <div class="queue-section-header">
+            <label>生成图列表</label>
+          </div>
+          <div id="fileList" class="file-list"></div>
         </div>
-        <div id="fileList" class="file-list"></div>
       </section>
     </section>
   </main>
