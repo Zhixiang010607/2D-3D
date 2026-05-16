@@ -263,7 +263,8 @@ select,
   gap: 8px;
 }
 
-.product-upload-actions .panel-file-button {
+.product-upload-actions .panel-file-button,
+.background-actions .panel-file-button {
   min-height: 42px;
   padding: 0 10px;
   white-space: nowrap;

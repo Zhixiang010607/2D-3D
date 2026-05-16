@@ -1,4 +1,5 @@
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_UPLOAD_FILES_PER_BATCH = 50;
 const PREVIEW_MAX_SIZE = 1600;
 const OUTPUT_JPEG_QUALITY = 0.98;
 const RENDER_UI_UPDATE_INTERVAL = 6;
@@ -173,7 +174,7 @@ app.innerHTML = `
       <aside class="panel">
         <div class="panel__title">
           <span data-icon="sliders"></span>
-          <h2>效果设置</h2>
+          <h2>上传设置</h2>
         </div>
 
         <div id="productUploadField" class="field">
@@ -190,7 +191,7 @@ app.innerHTML = `
               上传文件夹
             </label>
           </div>
-          <p class="field-hint">可以单张/多张上传，也可以上传文件夹；重复上传会追加保留。</p>
+          <p class="field-hint">直接上传图片每次最多 50 张；上传文件夹不限制数量，重复上传会追加保留。</p>
         </div>
 
         <div id="productShapeField" class="field field--disabled">
@@ -208,17 +209,18 @@ app.innerHTML = `
         <div id="backgroundUploadField" class="field">
           <label>背景库</label>
           <div class="background-actions">
-            <label class="mini-button">
+            <label class="primary panel-file-button">
               <span data-icon="image"></span>
               <input id="backgroundUpload" type="file" accept="image/*" multiple />
               上传背景
             </label>
-            <label class="mini-button">
+            <label class="primary panel-file-button">
               <span data-icon="folder"></span>
               <input id="backgroundFolderUpload" type="file" accept="image/*" webkitdirectory multiple />
               上传文件夹
             </label>
           </div>
+          <p class="field-hint">直接上传背景每次最多 50 张；上传文件夹不限制数量。</p>
         </div>
 
         <div class="render-controls render-controls--left">
@@ -349,16 +351,16 @@ function bindEvents() {
       normalizeBadgePosition();
       clearRendered();
       syncOptionLabels();
-      updateUi("设置已更新，可以重新生成");
-      renderPreview();
+      updateUi("设置已更新，已用第一张产品图和第一个背景刷新预览");
+      renderPreview({ forceProductPreview: true });
     });
   });
 
   document.querySelector("#badge").addEventListener("change", (event) => {
     state.options.badge = event.target.checked;
     clearRendered();
-    updateUi(event.target.checked ? "2D FLAT 标识已开启，可以在预览画布上拖动" : "2D FLAT 标识已关闭");
-    renderPreview();
+    updateUi(event.target.checked ? "2D FLAT 标识已开启，已刷新示例预览" : "2D FLAT 标识已关闭，已刷新示例预览");
+    renderPreview({ forceProductPreview: true });
   });
 }
 
@@ -374,19 +376,26 @@ function handleProductShape(event) {
 }
 
 function handleProductFiles(event) {
-  const files = Array.from(event.target.files)
+  let files = Array.from(event.target.files)
     .filter((file) => IMAGE_TYPES.has(file.type))
     .sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name));
+  const isDirectImageUpload = event.target.id === "productInput";
+  const imageCount = files.length;
+  const limited = isDirectImageUpload && imageCount > MAX_UPLOAD_FILES_PER_BATCH;
+  if (limited) files = files.slice(0, MAX_UPLOAD_FILES_PER_BATCH);
   event.target.value = "";
   if (!files.length) return;
   clearRendered();
   state.fileItems.push(...files.map((file) => createProductFileItem(file)));
   syncProductFiles();
   revokePreview();
+  const addMessage = limited
+    ? `一次最多上传 ${MAX_UPLOAD_FILES_PER_BATCH} 张，已追加前 ${files.length} 张`
+    : `已追加 ${files.length} 张图片`;
   updateUi(
     hasSelectedProductShape()
-      ? `已追加 ${files.length} 张图片，当前共 ${state.fileItems.length} 张`
-      : `已追加 ${files.length} 张图片，请选择图片形状`,
+      ? `${addMessage}，当前共 ${state.fileItems.length} 张`
+      : `${addMessage}，请选择图片形状`,
   );
   renderPreview();
 }
@@ -465,7 +474,11 @@ async function handleBackgroundFiles(event) {
     renderPreview();
     return;
   }
-  const files = Array.from(event.target.files).filter((file) => IMAGE_TYPES.has(file.type));
+  let files = Array.from(event.target.files).filter((file) => IMAGE_TYPES.has(file.type));
+  const isDirectImageUpload = event.target.id === "backgroundUpload";
+  const imageCount = files.length;
+  const limited = isDirectImageUpload && imageCount > MAX_UPLOAD_FILES_PER_BATCH;
+  if (limited) files = files.slice(0, MAX_UPLOAD_FILES_PER_BATCH);
   if (!files.length) return;
   clearRendered();
   for (const file of files) {
@@ -485,33 +498,34 @@ async function handleBackgroundFiles(event) {
   }
   event.target.value = "";
   paintBackgroundLibrary();
-  updateUi(`已载入 ${files.length} 张背景图`);
+  updateUi(limited ? `一次最多上传 ${MAX_UPLOAD_FILES_PER_BATCH} 张背景图，已载入前 ${files.length} 张` : `已载入 ${files.length} 张背景图`);
   renderPreview();
 }
 
-async function renderPreview() {
+async function renderPreview({ forceProductPreview = false } = {}) {
   if (state.processing) return;
   if (state.files.length && !hasSelectedProductShape()) {
     paintShapeRequiredStage();
     return;
   }
   const selectedItems = getSelectedProductItems();
-  if (state.files.length && !selectedItems.length) {
+  const previewProductItem = forceProductPreview ? state.fileItems[0] || selectedItems[0] : selectedItems[0];
+  if (state.files.length && !selectedItems.length && !forceProductPreview) {
     paintNoSelectedProductsStage();
     return;
   }
   const focusedBackground = getFocusedBackground();
-  if (focusedBackground) {
+  if (focusedBackground && !forceProductPreview) {
     paintPlacementStage(focusedBackground);
     return;
   }
-  if (!selectedItems.length || !getActiveBackgroundPresets().length) {
+  const previewBackground = forceProductPreview ? state.userBackgrounds[0] || getActiveBackgroundPresets()[0] : focusedBackground?.selected ? focusedBackground : getActiveBackgroundPresets()[0];
+  if (!previewProductItem || !previewBackground) {
     paintEmptyStage();
     return;
   }
-  const previewBackground = focusedBackground?.selected ? focusedBackground : getActiveBackgroundPresets()[0];
   const previewOptions = { ...state.options, size: Math.min(state.options.size, PREVIEW_MAX_SIZE) };
-  const blob = await renderProduct(selectedItems[0].file, previewOptions, previewBackground);
+  const blob = await renderProduct(previewProductItem.file, previewOptions, previewBackground);
   revokePreview();
   state.previewUrl = URL.createObjectURL(blob);
   paintPreview(state.previewUrl);
