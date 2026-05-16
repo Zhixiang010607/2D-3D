@@ -827,6 +827,7 @@ function createDefaultPlacement(shape = "circle") {
     shortAxis: 80,
     fixedScale: 100,
     rotation: 0,
+    fineTune: false,
   };
 }
 
@@ -842,6 +843,7 @@ function normalizePlacementLayout(layout) {
   base.shortAxis = clamp(numberOr(base.shortAxis ?? base.height, 80), 0, 180);
   base.fixedScale = clamp(numberOr(base.fixedScale, 100), 0, 180);
   base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
+  base.fineTune = Boolean(base.fineTune) && base.shape === "rectangle";
   if (base.shortAxis > base.longAxis) [base.longAxis, base.shortAxis] = [base.shortAxis, base.longAxis];
   return base;
 }
@@ -998,6 +1000,74 @@ function placementRotationRad(layout) {
   return (normalizePlacementLayout(layout).rotation * Math.PI) / 180;
 }
 
+function placementCornerSign(corner) {
+  return {
+    tl: { x: -1, y: -1 },
+    tr: { x: 1, y: -1 },
+    br: { x: 1, y: 1 },
+    bl: { x: -1, y: 1 },
+  }[corner] || { x: 1, y: 1 };
+}
+
+function placementCornerHandlesMarkup() {
+  const labels = {
+    tl: "左上角",
+    tr: "右上角",
+    br: "右下角",
+    bl: "左下角",
+  };
+  return Object.entries(labels)
+    .map(
+      ([corner, label]) =>
+        `<button class="placement-corner-handle" type="button" data-corner="${corner}" aria-label="微调${label}"></button>`,
+    )
+    .join("");
+}
+
+function fitPlacementRectangleCorner(layout, corner, point) {
+  const normalized = normalizePlacementLayout(layout);
+  const sign = placementCornerSign(corner);
+  const dimensions = placementDimensions(normalized);
+  const rotation = placementRotationRad(normalized);
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const rotatePoint = (x, y) => ({
+    x: x * cos - y * sin,
+    y: x * sin + y * cos,
+  });
+  const oppositeLocal = {
+    x: -sign.x * (dimensions.width / 2),
+    y: -sign.y * (dimensions.height / 2),
+  };
+  const oppositeOffset = rotatePoint(oppositeLocal.x, oppositeLocal.y);
+  const opposite = {
+    x: normalized.x + oppositeOffset.x,
+    y: normalized.y + oppositeOffset.y,
+  };
+  const delta = {
+    x: point.x - opposite.x,
+    y: point.y - opposite.y,
+  };
+  const localDelta = {
+    x: delta.x * cos + delta.y * sin,
+    y: -delta.x * sin + delta.y * cos,
+  };
+  const width = clamp(Math.abs(localDelta.x), 1, 94);
+  const height = clamp(Math.abs(localDelta.y), 1, 94);
+  const centerLocal = {
+    x: sign.x * (width / 2),
+    y: sign.y * (height / 2),
+  };
+  const centerOffset = rotatePoint(centerLocal.x, centerLocal.y);
+  return normalizePlacementLayout({
+    ...normalized,
+    x: clamp(opposite.x + centerOffset.x, 0, 100),
+    y: clamp(opposite.y + centerOffset.y, 0, 100),
+    rectLength: width / 0.68,
+    rectWidth: height / 0.68,
+  });
+}
+
 function getLayoutPlaceholderViews(layoutMode) {
   if (layoutMode === "frontGallery") {
     return [
@@ -1069,15 +1139,17 @@ function placementShapeMarkup(layout, view, options = {}) {
   const scale = view.r / 0.34;
   const width = clamp(dimensions.width * scale * (view.x ?? 1), 0, 98);
   const height = clamp(dimensions.height * scale * (view.y ?? 1), 0, 98);
+  const cornerTune = Boolean(options.cornerTune) && layout.shape === "rectangle";
   const classes = [
     "placement-stage-shape",
     `placement-stage-shape--${layout.shape}`,
     options.draggable ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed",
+    cornerTune ? "placement-stage-shape--fine-tune" : "",
   ].join(" ");
   const content =
     layout.shape === "polygon"
       ? `<svg class="placement-polygon-svg" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${regularPolygonSvgPoints(layout.sides)}"></polygon></svg>`
-      : `<span></span>`;
+      : `<span></span>${cornerTune ? placementCornerHandlesMarkup() : ""}`;
   return `
     <div
       class="${classes}"
@@ -2376,6 +2448,7 @@ function paintPlacementStage(backgroundItem) {
       ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
       : getFixedLayoutPlaceholderViews(layoutMode);
   const fixedScaleMultiplier = layoutMode === "free" ? 1 : layout.fixedScale / 100;
+  const cornerTune = layoutMode === "free" && layout.shape === "rectangle" && layout.fineTune;
   stage.style.setProperty("--stage-bg", "#f4f5f2");
   stage.classList.remove("stage--checker");
   stage.classList.add("stage--placement");
@@ -2388,7 +2461,7 @@ function paintPlacementStage(backgroundItem) {
                <img class="placement-bg placement-bg--contain" src="${backgroundItem.url}" alt="${escapeHtml(backgroundItem.name)}" draggable="false" />`
             : `<img class="placement-bg placement-bg--${fit === "contain" ? "contain" : "cover"}" src="${backgroundItem.url}" alt="${escapeHtml(backgroundItem.name)}" draggable="false" />`
         }
-        ${views.map((view) => placementShapeMarkup(layout, view, { draggable: layoutMode === "free", scaleMultiplier: fixedScaleMultiplier })).join("")}
+        ${views.map((view) => placementShapeMarkup(layout, view, { draggable: layoutMode === "free", scaleMultiplier: fixedScaleMultiplier, cornerTune })).join("")}
         ${state.options.badge ? badgeMarkerMarkup() : ""}
       </div>
       <div class="placement-controls">
@@ -2416,6 +2489,10 @@ function paintPlacementStage(backgroundItem) {
           <span>旋转角度</span>
           <input id="placementRotation" class="number-control" type="number" min="-180" max="180" step="0.1" value="${layout.rotation}" />
         </label>
+        <label class="placement-control placement-control--toggle ${layoutMode === "free" && layout.shape === "rectangle" ? "" : "field--hidden"}">
+          <span>四角微调</span>
+          <input id="placementFineTune" type="checkbox" ${layout.fineTune ? "checked" : ""} />
+        </label>
       </div>
     </div>
   `;
@@ -2432,10 +2509,11 @@ function bindPlacementStage(backgroundItem) {
   const sidesInput = stage.querySelector("#placementSides");
   const rotationInput = stage.querySelector("#placementRotation");
   const fixedScaleInput = stage.querySelector("#placementFixedScale");
+  const fineTuneInput = stage.querySelector("#placementFineTune");
   const fixedScaleLabel = stage.querySelector("[data-placement-value='fixedScale']");
   const badgeMarker = stage.querySelector(".badge-marker");
   const layoutMode = getBackgroundLayoutMode(backgroundItem);
-  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !fixedScaleInput || !fixedScaleLabel) return;
+  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !fixedScaleInput || !fineTuneInput || !fixedScaleLabel) return;
 
   const updateShapeElement = () => {
     const layout = placementLayoutForBackground(backgroundItem);
@@ -2450,7 +2528,8 @@ function bindPlacementStage(backgroundItem) {
       const view = views[index] || views[0];
       const dimensions = placementDimensions(layout, fixedScaleMultiplier);
       const scale = view.r / 0.34;
-      shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"}`;
+      const cornerTune = layoutMode === "free" && layout.shape === "rectangle" && layout.fineTune;
+      shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"} ${cornerTune ? "placement-stage-shape--fine-tune" : ""}`;
       shape.style.left = `${(view.cx * 100).toFixed(3)}%`;
       shape.style.top = `${(view.cy * 100).toFixed(3)}%`;
       shape.style.width = `${clamp(dimensions.width * scale * (view.x ?? 1), 0, 98)}%`;
@@ -2465,6 +2544,7 @@ function bindPlacementStage(backgroundItem) {
     sidesInput.value = layout.sides;
     rotationInput.value = layout.rotation;
     fixedScaleInput.value = layout.fixedScale;
+    fineTuneInput.checked = layout.fineTune;
     fixedScaleLabel.textContent = layout.fixedScale;
   };
 
@@ -2488,6 +2568,42 @@ function bindPlacementStage(backgroundItem) {
   bindBadgeMarkerDrag(canvas, badgeMarker);
 
   if (layoutMode === "free") {
+    const cornerHandles = Array.from(stage.querySelectorAll(".placement-corner-handle"));
+    cornerHandles.forEach((handle) => {
+      let isDraggingCorner = false;
+      const corner = handle.dataset.corner;
+      const moveCorner = (event) => {
+        const point = pointerToCanvasPercent(event);
+        backgroundItem.freeLayout = fitPlacementRectangleCorner(placementLayoutForBackground(backgroundItem), corner, point);
+        updateShapeElement();
+      };
+
+      handle.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        isDraggingCorner = true;
+        handle.setPointerCapture(event.pointerId);
+        moveCorner(event);
+      });
+      handle.addEventListener("pointermove", (event) => {
+        if (!isDraggingCorner) return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveCorner(event);
+      });
+      handle.addEventListener("pointerup", (event) => {
+        if (!isDraggingCorner) return;
+        event.preventDefault();
+        event.stopPropagation();
+        isDraggingCorner = false;
+        handle.releasePointerCapture(event.pointerId);
+        savePlacementChange("矩形四角已微调，可以重新生成");
+      });
+      handle.addEventListener("pointercancel", () => {
+        isDraggingCorner = false;
+      });
+    });
+
     let isDragging = false;
     const moveShape = (event) => {
       const { x, y } = pointerToCanvasPercent(event);
@@ -2497,6 +2613,7 @@ function bindPlacementStage(backgroundItem) {
     };
 
     canvas.addEventListener("pointerdown", (event) => {
+      if (event.target.closest(".placement-corner-handle")) return;
       event.preventDefault();
       isDragging = true;
       canvas.setPointerCapture(event.pointerId);
@@ -2516,6 +2633,14 @@ function bindPlacementStage(backgroundItem) {
       isDragging = false;
     });
   }
+
+  fineTuneInput.addEventListener("change", (event) => {
+    const layout = placementLayoutForBackground(backgroundItem);
+    backgroundItem.freeLayout = { ...layout, fineTune: event.target.checked };
+    clearRendered();
+    updateUi(event.target.checked ? "四角微调已开启" : "四角微调已关闭");
+    paintPlacementStage(backgroundItem);
+  });
 
   primaryInput.addEventListener("input", (event) => {
     const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));

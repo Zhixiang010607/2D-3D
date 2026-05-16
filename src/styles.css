@@ -749,6 +749,10 @@ input[type="range"] {
   pointer-events: none;
 }
 
+.placement-stage-shape--fine-tune {
+  pointer-events: auto;
+}
+
 .placement-stage-shape--fixed {
   background:
     repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.1) 0 8px, rgba(255, 255, 255, 0.55) 8px 16px),
@@ -774,6 +778,7 @@ input[type="range"] {
   position: absolute;
   inset: 8%;
   border: 2px dashed rgba(0, 0, 0, 0.46);
+  pointer-events: none;
 }
 
 .placement-stage-shape--circle span,
@@ -806,6 +811,46 @@ input[type="range"] {
 
 .placement-stage-shape--fixed .placement-polygon-svg polygon {
   fill: rgba(255, 255, 255, 0.68);
+}
+
+.placement-corner-handle {
+  position: absolute;
+  z-index: 3;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 2px solid #111;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(17, 17, 17, 0.22);
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  transform: translate(-50%, -50%);
+}
+
+.placement-corner-handle:active {
+  cursor: grabbing;
+}
+
+.placement-corner-handle[data-corner="tl"] {
+  left: 0;
+  top: 0;
+}
+
+.placement-corner-handle[data-corner="tr"] {
+  left: 100%;
+  top: 0;
+}
+
+.placement-corner-handle[data-corner="br"] {
+  left: 100%;
+  top: 100%;
+}
+
+.placement-corner-handle[data-corner="bl"] {
+  left: 0;
+  top: 100%;
 }
 
 .badge-marker {
@@ -874,6 +919,17 @@ input[type="range"] {
 
 .placement-control--scale {
   grid-column: 1 / -1;
+}
+
+.placement-control--toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.placement-control--toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #1f5e52;
 }
 
 .number-control {
