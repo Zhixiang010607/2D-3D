@@ -260,18 +260,6 @@ app.innerHTML = `
             <h2>渲染参数</h2>
           </div>
 
-          <div class="field product-files-field">
-            <div class="product-files-header">
-              <label>上传图片列表</label>
-              <span id="productFileCount" class="mini-count">0 / 0</span>
-            </div>
-            <div class="product-file-actions">
-              <button id="selectAllProducts" class="mini-button" type="button" disabled>全选</button>
-              <button id="clearProductFiles" class="mini-button mini-button--danger" type="button" disabled>清空上传图片</button>
-            </div>
-            <div id="productFileList" class="product-file-list"></div>
-          </div>
-
           <div class="field">
             <label for="size">输出尺寸 <b id="sizeValue">2400</b> × <b id="sizeValueY">2400</b> px</label>
             <input id="size" type="range" min="800" max="8000" step="200" value="2400" />
@@ -296,6 +284,18 @@ app.innerHTML = `
           <div class="field">
             <label for="badgeSize">2D FLAT 标识大小 <b id="badgeSizeValue">100</b>%</label>
             <input id="badgeSize" type="range" min="40" max="220" step="5" value="100" />
+          </div>
+
+          <div class="field product-files-field">
+            <div class="product-files-header">
+              <label>上传图片列表</label>
+              <span id="productFileCount" class="mini-count">0 / 0</span>
+            </div>
+            <div class="product-file-actions">
+              <button id="selectAllProducts" class="mini-button" type="button" disabled>全选</button>
+              <button id="clearProductFiles" class="mini-button mini-button--danger" type="button" disabled>清空上传图片</button>
+            </div>
+            <div id="productFileList" class="product-file-list"></div>
           </div>
         </div>
 
