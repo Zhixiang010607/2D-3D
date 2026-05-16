@@ -1039,6 +1039,10 @@ function regularPolygonSvgPoints(sides) {
   }).join(" ");
 }
 
+function rectangleSvgPoints() {
+  return "0,0 100,0 100,100 0,100";
+}
+
 function regularPolygonStartAngle(sides) {
   const count = Math.round(clamp(Number(sides) || 6, 3, 12));
   return count === 3 ? -Math.PI / 2 : -Math.PI / 2 - Math.PI / count;
@@ -1432,9 +1436,11 @@ function placementShapeMarkup(layout, view, options = {}) {
   ].join(" ");
   const content =
     layout.shape === "polygon"
-      ? `<svg class="placement-polygon-svg" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${regularPolygonSvgPoints(layout.sides)}"></polygon></svg>`
+      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${regularPolygonSvgPoints(layout.sides)}"></polygon></svg>`
       : cornerTune
         ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${placementQuadSvgPoints(layout, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(layout, dimensions)}`
+        : layout.shape === "rectangle"
+          ? `<svg class="placement-outline-svg placement-outline-svg--rectangle" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${rectangleSvgPoints()}"></polygon></svg>`
         : `<span></span>`;
   return `
     <div
@@ -2211,7 +2217,8 @@ function drawFace(ctx, image, view) {
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
 
-    const scale = Math.max((rx * 2.04) / image.width, (ry * 2.04) / image.height);
+    const coverSize = isRoundProductShape(view) ? 2.04 : 2;
+    const scale = Math.max((rx * coverSize) / image.width, (ry * coverSize) / image.height);
     const w = image.width * scale;
     const h = image.height * scale;
     ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
@@ -2826,7 +2833,7 @@ function bindPlacementStage(backgroundItem) {
       shape.style.height = `${clamp(dimensions.height * scale * (view.y ?? 1), 0, 98)}%`;
       shape.style.setProperty("--shape-rotate", `${view.rot || 0}rad`);
       shape.style.setProperty("--polygon-path", regularPolygonClipPath(layout.sides));
-      const polygon = shape.querySelector(".placement-polygon-svg polygon");
+      const polygon = shape.querySelector(".placement-outline-svg--polygon polygon");
       if (polygon) polygon.setAttribute("points", regularPolygonSvgPoints(layout.sides));
       const quadPolygon = shape.querySelector(".placement-quad-svg polygon");
       if (quadPolygon) quadPolygon.setAttribute("points", placementQuadSvgPoints(layout, dimensions));
