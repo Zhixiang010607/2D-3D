@@ -1708,11 +1708,11 @@ function placementShapeMarkup(layout, view, options = {}) {
   ].join(" ");
   const content =
     layout.shape === "polygon"
-      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${polygonTune ? placementPolygonSvgPoints(layout, dimensions) : regularPolygonSvgPoints(layout.sides)}"></polygon></svg>${polygonTune ? placementPolygonHandlesMarkup(layout, dimensions) : ""}`
+      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${polygonTune ? placementPolygonSvgPoints(layout, dimensions) : regularPolygonSvgPoints(layout.sides)}"></polygon></svg>${polygonTune ? placementPolygonHandlesMarkup(layout, dimensions) : ""}`
       : cornerTune
-        ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${placementQuadSvgPoints(layout, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(layout, dimensions)}`
+        ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${placementQuadSvgPoints(layout, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(layout, dimensions)}`
         : layout.shape === "rectangle"
-          ? `<svg class="placement-outline-svg placement-outline-svg--rectangle" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${rectangleSvgPoints()}"></polygon></svg>`
+          ? `<svg class="placement-outline-svg placement-outline-svg--rectangle" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${rectangleSvgPoints()}"></polygon></svg>`
         : `<span></span>`;
   return `
     <div
