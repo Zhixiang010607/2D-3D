@@ -231,30 +231,7 @@ app.innerHTML = `
           </div>
         </div>
 
-        <div class="field">
-          <div id="backgroundLibrary" class="background-library"></div>
-        </div>
-
-      </aside>
-
-      <section class="preview">
-        <div class="preview__toolbar">
-          <div>
-            <p class="eyebrow">Preview</p>
-            <h2 id="statusTitle">等待上传图片</h2>
-          </div>
-          <span id="countPill" class="pill">0 张图片</span>
-        </div>
-        <div id="previewStage" class="stage">
-          <div class="empty">
-            <span data-icon="image"></span>
-            <p>上传 2D 图片后，这里会显示第一张转换预览。</p>
-          </div>
-        </div>
-      </section>
-
-      <section class="queue">
-        <div class="render-controls">
+        <div class="render-controls render-controls--left">
           <div class="panel__title">
             <span data-icon="sliders"></span>
             <h2>渲染参数</h2>
@@ -285,18 +262,44 @@ app.innerHTML = `
             <label for="badgeSize">2D FLAT 标识大小 <b id="badgeSizeValue">100</b>%</label>
             <input id="badgeSize" type="range" min="40" max="220" step="5" value="100" />
           </div>
+        </div>
 
-          <div class="field product-files-field">
-            <div class="product-files-header">
-              <label>上传图片列表</label>
-              <span id="productFileCount" class="mini-count">0 / 0</span>
-            </div>
-            <div class="product-file-actions">
-              <button id="selectAllProducts" class="mini-button" type="button" disabled>全选</button>
-              <button id="clearProductFiles" class="mini-button mini-button--danger" type="button" disabled>清空上传图片</button>
-            </div>
-            <div id="productFileList" class="product-file-list"></div>
+      </aside>
+
+      <section class="preview">
+        <div class="preview__toolbar">
+          <div>
+            <p class="eyebrow">Preview</p>
+            <h2 id="statusTitle">等待上传图片</h2>
           </div>
+          <span id="countPill" class="pill">0 张图片</span>
+        </div>
+        <div id="previewStage" class="stage">
+          <div class="empty">
+            <span data-icon="image"></span>
+            <p>上传 2D 图片后，这里会显示第一张转换预览。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="queue">
+        <div class="field product-files-field">
+          <div class="product-files-header">
+            <label>上传图片列表</label>
+            <span id="productFileCount" class="mini-count">0 / 0</span>
+          </div>
+          <div class="product-file-actions">
+            <button id="selectAllProducts" class="mini-button" type="button" disabled>全选</button>
+            <button id="clearProductFiles" class="mini-button mini-button--danger" type="button" disabled>清空上传图片</button>
+          </div>
+          <div id="productFileList" class="product-file-list"></div>
+        </div>
+
+        <div class="background-library-field">
+          <div class="product-files-header">
+            <label>背景库图片</label>
+          </div>
+          <div id="backgroundLibrary" class="background-library"></div>
         </div>
 
         <div class="panel__title">
