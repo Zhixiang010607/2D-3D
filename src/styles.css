@@ -925,6 +925,14 @@ input[type="range"] {
   grid-column: 1 / -1;
 }
 
+.placement-control--locked {
+  opacity: 0.58;
+}
+
+.placement-control--locked input {
+  cursor: not-allowed;
+}
+
 .placement-control--toggle {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;

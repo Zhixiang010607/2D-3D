@@ -831,6 +831,7 @@ function createDefaultPlacement(shape = "circle") {
     rotation: 0,
     fineTune: false,
     quadCorners: null,
+    polygonPoints: null,
   };
 }
 
@@ -850,12 +851,19 @@ function normalizePlacementLayout(layout) {
   base.shortAxis = clamp(numberOr(base.shortAxis ?? base.height, 80), 0, 180);
   base.fixedScale = clamp(numberOr(base.fixedScale, 100), 0, 180);
   base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
-  base.fineTune = Boolean(base.fineTune) && base.shape === "rectangle";
+  base.fineTune = Boolean(base.fineTune) && (base.shape === "rectangle" || base.shape === "polygon");
   base.quadCorners =
     base.shape === "rectangle"
       ? normalizePlacementQuadCorners(base.quadCorners, {
           width: clamp(base.rectLength * PLACEMENT_DIMENSION_SCALE, 0, 94),
           height: clamp(base.rectWidth * PLACEMENT_DIMENSION_SCALE, 0, 94),
+        })
+      : null;
+  base.polygonPoints =
+    base.shape === "polygon"
+      ? normalizePlacementPolygonPoints(base.polygonPoints, base.sides, {
+          width: clamp((base.sideLength / Math.sin(Math.PI / base.sides)) * PLACEMENT_DIMENSION_SCALE, 0, 94),
+          height: clamp((base.sideLength / Math.sin(Math.PI / base.sides)) * PLACEMENT_DIMENSION_SCALE, 0, 94),
         })
       : null;
   if (base.shortAxis > base.longAxis) [base.longAxis, base.shortAxis] = [base.shortAxis, base.longAxis];
@@ -923,6 +931,35 @@ function placementPointToElementPercent(point, dimensions) {
     x: dimensions.width > 0 ? 50 + (point.x / dimensions.width) * 100 : 50,
     y: dimensions.height > 0 ? 50 + (point.y / dimensions.height) * 100 : 50,
   };
+}
+
+function defaultPlacementPolygonPoints(sides, dimensions) {
+  const count = Math.round(clamp(Number(sides) || 6, 3, 12));
+  const startAngle = regularPolygonStartAngle(count);
+  return Array.from({ length: count }, (_, index) => {
+    const angle = startAngle + (index / count) * Math.PI * 2;
+    return {
+      x: Math.cos(angle) * (dimensions.width / 2),
+      y: Math.sin(angle) * (dimensions.height / 2),
+    };
+  });
+}
+
+function normalizePlacementPolygonPoints(points, sides, dimensions) {
+  const fallback = defaultPlacementPolygonPoints(sides, dimensions);
+  const source = Array.isArray(points) && points.length === fallback.length ? points : fallback;
+  return fallback.map((fallbackPoint, index) => {
+    const point = source[index] || fallbackPoint;
+    return {
+      x: clamp(numberOr(point.x, fallbackPoint.x), -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+      y: clamp(numberOr(point.y, fallbackPoint.y), -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+    };
+  });
+}
+
+function placementPolygonPoints(layout) {
+  const normalized = normalizePlacementLayout(layout);
+  return normalizePlacementPolygonPoints(normalized.polygonPoints, normalized.sides, placementDimensions(normalized));
 }
 
 function placementRenderRadius(layout) {
@@ -1045,6 +1082,15 @@ function rectangleSvgPoints() {
   return "0,0 100,0 100,100 0,100";
 }
 
+function placementPolygonSvgPoints(layout, dimensions) {
+  return placementPolygonPoints(layout)
+    .map((point) => {
+      const percent = placementPointToElementPercent(point, dimensions);
+      return `${percent.x.toFixed(3)},${percent.y.toFixed(3)}`;
+    })
+    .join(" ");
+}
+
 function regularPolygonStartAngle(sides) {
   const count = Math.round(clamp(Number(sides) || 6, 3, 12));
   return count === 3 ? -Math.PI / 2 : -Math.PI / 2 - Math.PI / count;
@@ -1080,6 +1126,15 @@ function placementCornerHandlesMarkup(layout, dimensions) {
     .join("");
 }
 
+function placementPolygonHandlesMarkup(layout, dimensions) {
+  return placementPolygonPoints(layout)
+    .map((point, index) => {
+      const percent = placementPointToElementPercent(point, dimensions);
+      return `<button class="placement-corner-handle" type="button" data-point-index="${index}" aria-label="微调顶点 ${index + 1}" style="left: ${percent.x}%; top: ${percent.y}%;"></button>`;
+    })
+    .join("");
+}
+
 function fitPlacementRectangleCorner(layout, corner, point) {
   const normalized = normalizePlacementLayout(layout);
   const localPoint = localPointFromCanvasPercent(normalized, point);
@@ -1094,6 +1149,26 @@ function fitPlacementRectangleCorner(layout, corner, point) {
     ...normalized,
     fineTune: true,
     quadCorners: nextCorners,
+  });
+}
+
+function fitPlacementPolygonPoint(layout, index, point) {
+  const normalized = normalizePlacementLayout(layout);
+  const points = placementPolygonPoints(normalized);
+  const pointIndex = Math.round(clamp(Number(index), 0, points.length - 1));
+  const localPoint = localPointFromCanvasPercent(normalized, point);
+  const nextPoints = points.map((item, currentIndex) =>
+    currentIndex === pointIndex
+      ? {
+          x: clamp(localPoint.x, -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+          y: clamp(localPoint.y, -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+        }
+      : item,
+  );
+  return normalizePlacementLayout({
+    ...normalized,
+    fineTune: true,
+    polygonPoints: nextPoints,
   });
 }
 
@@ -1142,6 +1217,47 @@ function quadBounds(points) {
     maxX: Math.max(...values.map((point) => point.x)),
     minY: Math.min(...values.map((point) => point.y)),
     maxY: Math.max(...values.map((point) => point.y)),
+  };
+}
+
+function placementPolygonCanvasPoints(layout, size) {
+  const normalized = normalizePlacementLayout(layout);
+  const rotation = placementRotationRad(normalized);
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const center = {
+    x: (normalized.x / 100) * size,
+    y: (normalized.y / 100) * size,
+  };
+  return placementPolygonPoints(normalized).map((point) => {
+    const local = {
+      x: (point.x / 100) * size,
+      y: (point.y / 100) * size,
+    };
+    return {
+      x: center.x + local.x * cos - local.y * sin,
+      y: center.y + local.x * sin + local.y * cos,
+    };
+  });
+}
+
+function tracePointArray(ctx, points) {
+  if (!points.length) return;
+  ctx.moveTo(points[0].x, points[0].y);
+  points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+  ctx.closePath();
+}
+
+function offsetPointArray(points, dx, dy) {
+  return points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+}
+
+function pointArrayBounds(points) {
+  return {
+    minX: Math.min(...points.map((point) => point.x)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxY: Math.max(...points.map((point) => point.y)),
   };
 }
 
@@ -1405,6 +1521,96 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
   ctx.restore();
 }
 
+function drawCustomPolygonProductView(ctx, image, size, layout, depth, shadow, shine, material) {
+  const normalized = normalizePlacementLayout(layout);
+  const points = placementPolygonCanvasPoints(normalized, size);
+  if (points.length < 3) return;
+  const bounds = pointArrayBounds(points);
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const height = Math.max(1, bounds.maxY - bounds.minY);
+  const sourceRect = coverSourceRect(image, width / height);
+  const rotation = placementRotationRad(normalized);
+  const offsetX = Math.cos(rotation) * depth * 0.98 - Math.sin(rotation) * depth * 0.72;
+  const offsetY = Math.sin(rotation) * depth * 0.98 + Math.cos(rotation) * depth * 0.72;
+
+  if (shadow > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.46 * shadow;
+    ctx.filter = `blur(${Math.max(18, depth * 1.24)}px)`;
+    ctx.fillStyle = "rgba(32,38,36,0.68)";
+    ctx.beginPath();
+    tracePointArray(ctx, offsetPointArray(points, offsetX * 1.14, offsetY * 1.32));
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (depth > 0.5) {
+    const base = hexToRgb(state.options.edgeColor || "#8f9188");
+    const layers = Math.max(22, Math.round(depth * 1.1));
+    for (let i = layers; i >= 1; i -= 1) {
+      const t = i / layers;
+      const edgePoints = offsetPointArray(points, offsetX * t, offsetY * t);
+      const edgeBounds = pointArrayBounds(edgePoints);
+      const edge = ctx.createLinearGradient(edgeBounds.minX, edgeBounds.minY, edgeBounds.maxX, edgeBounds.maxY);
+      if (material === "metal") {
+        edge.addColorStop(0, rgbString(tint(base, 0.42)));
+        edge.addColorStop(0.48, rgbString(shadeColor(base, 0.2)));
+        edge.addColorStop(1, rgbString(shadeColor(base, 0.46)));
+      } else {
+        edge.addColorStop(0, rgbString(tint(base, 0.48)));
+        edge.addColorStop(0.54, rgbString(tint(base, 0.1)));
+        edge.addColorStop(1, rgbString(shadeColor(base, 0.48)));
+      }
+      ctx.save();
+      ctx.globalAlpha = 0.72 + 0.2 * (1 - t);
+      ctx.fillStyle = edge;
+      ctx.beginPath();
+      tracePointArray(ctx, edgePoints);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  tracePointArray(ctx, points);
+  ctx.clip();
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(bounds.minX, bounds.minY, width, height);
+  ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
+  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, bounds.minX, bounds.minY, width, height);
+  ctx.filter = "none";
+  const shade = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
+  shade.addColorStop(0, "rgba(255,255,255,0.08)");
+  shade.addColorStop(0.58, "rgba(255,255,255,0)");
+  shade.addColorStop(1, "rgba(0,0,0,0.12)");
+  ctx.fillStyle = shade;
+  ctx.fillRect(bounds.minX, bounds.minY, width, height);
+  if (material === "acrylic") {
+    const gloss = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.minY + height * 0.5);
+    gloss.addColorStop(0, `rgba(255,255,255,${0.08 + shine * 0.1})`);
+    gloss.addColorStop(0.44, `rgba(255,255,255,${0.02 + shine * 0.04})`);
+    gloss.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gloss;
+    ctx.fillRect(bounds.minX, bounds.minY, width, height);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(255,255,255,0.7)";
+  ctx.lineWidth = Math.max(1.5, size * 0.0016);
+  ctx.beginPath();
+  tracePointArray(ctx, points);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(0,0,0,0.32)";
+  ctx.lineWidth = Math.max(1.2, size * 0.0012);
+  ctx.beginPath();
+  tracePointArray(ctx, points);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function localPointFromCanvasPercent(layout, point) {
   const normalized = normalizePlacementLayout(layout);
   const rotation = placementRotationRad(normalized);
@@ -1491,16 +1697,18 @@ function placementShapeMarkup(layout, view, options = {}) {
   const scale = view.r / 0.34;
   const width = clamp(dimensions.width * scale * (view.x ?? 1), 0, 98);
   const height = clamp(dimensions.height * scale * (view.y ?? 1), 0, 98);
-  const cornerTune = Boolean(options.cornerTune) && layout.shape === "rectangle";
+  const fineTuneActive = Boolean(options.fineTuneActive) && (layout.shape === "rectangle" || layout.shape === "polygon");
+  const cornerTune = fineTuneActive && layout.shape === "rectangle";
+  const polygonTune = fineTuneActive && layout.shape === "polygon";
   const classes = [
     "placement-stage-shape",
     `placement-stage-shape--${layout.shape}`,
     options.draggable ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed",
-    cornerTune ? "placement-stage-shape--fine-tune" : "",
+    fineTuneActive ? "placement-stage-shape--fine-tune" : "",
   ].join(" ");
   const content =
     layout.shape === "polygon"
-      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${regularPolygonSvgPoints(layout.sides)}"></polygon></svg>`
+      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${polygonTune ? placementPolygonSvgPoints(layout, dimensions) : regularPolygonSvgPoints(layout.sides)}"></polygon></svg>${polygonTune ? placementPolygonHandlesMarkup(layout, dimensions) : ""}`
       : cornerTune
         ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${placementQuadSvgPoints(layout, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(layout, dimensions)}`
         : layout.shape === "rectangle"
@@ -1627,6 +1835,8 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
   if (layoutMode === "free") {
     if (placementLayout.shape === "rectangle" && placementLayout.fineTune) {
       drawQuadProductView(ctx, source, size, placementLayout, depth * 1.16, shadow, shine, options.material);
+    } else if (placementLayout.shape === "polygon" && placementLayout.fineTune) {
+      drawCustomPolygonProductView(ctx, source, size, placementLayout, depth * 1.16, shadow, shine, options.material);
     } else {
       const radius = placementRenderRadius(placementLayout);
       if (radius > 0) {
@@ -2809,7 +3019,11 @@ function paintPlacementStage(backgroundItem) {
       ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
       : getFixedLayoutPlaceholderViews(layoutMode);
   const fixedScaleMultiplier = layoutMode === "free" ? 1 : layout.fixedScale / 100;
-  const cornerTune = layoutMode === "free" && layout.shape === "rectangle" && layout.fineTune;
+  const fineTuneEnabled = layoutMode === "free" && (layout.shape === "rectangle" || layout.shape === "polygon");
+  const fineTuneActive = fineTuneEnabled && layout.fineTune;
+  const lockPrimary = fineTuneActive && (layout.shape === "rectangle" || layout.shape === "polygon");
+  const lockSecondary = fineTuneActive && layout.shape === "rectangle";
+  const lockSides = fineTuneActive && layout.shape === "polygon";
   stage.style.setProperty("--stage-bg", "#f4f5f2");
   stage.classList.remove("stage--checker");
   stage.classList.add("stage--placement");
@@ -2822,7 +3036,7 @@ function paintPlacementStage(backgroundItem) {
                <img class="placement-bg placement-bg--contain" src="${backgroundItem.url}" alt="${escapeHtml(backgroundItem.name)}" draggable="false" />`
             : `<img class="placement-bg placement-bg--${fit === "contain" ? "contain" : "cover"}" src="${backgroundItem.url}" alt="${escapeHtml(backgroundItem.name)}" draggable="false" />`
         }
-        ${views.map((view) => placementShapeMarkup(layout, view, { draggable: layoutMode === "free", scaleMultiplier: fixedScaleMultiplier, cornerTune })).join("")}
+        ${views.map((view) => placementShapeMarkup(layout, view, { draggable: layoutMode === "free", scaleMultiplier: fixedScaleMultiplier, fineTuneActive })).join("")}
         ${state.options.badge ? badgeMarkerMarkup() : ""}
       </div>
       <div class="placement-controls">
@@ -2834,24 +3048,24 @@ function paintPlacementStage(backgroundItem) {
           <span>整体占比 <b data-placement-value="fixedScale">${layout.fixedScale}</b>%</span>
           <input id="placementFixedScale" type="range" min="0" max="180" step="5" value="${layout.fixedScale}" />
         </label>
-        <label class="placement-control ${layoutMode === "free" ? "" : "field--hidden"}">
+        <label class="placement-control ${layoutMode === "free" ? "" : "field--hidden"} ${lockPrimary ? "placement-control--locked" : ""}">
           <span>${controls.primaryLabel}</span>
-          <input id="placementPrimary" class="number-control" type="number" min="${controls.primaryMin}" max="${controls.primaryMax}" step="${controls.primaryStep}" value="${controls.primaryValue}" />
+          <input id="placementPrimary" class="number-control" type="number" min="${controls.primaryMin}" max="${controls.primaryMax}" step="${controls.primaryStep}" value="${controls.primaryValue}" ${lockPrimary ? "disabled" : ""} />
         </label>
-        <label class="placement-control ${layoutMode === "free" && controls.secondaryKey ? "" : "field--hidden"}">
+        <label class="placement-control ${layoutMode === "free" && controls.secondaryKey ? "" : "field--hidden"} ${lockSecondary ? "placement-control--locked" : ""}">
           <span>${controls.secondaryLabel || "短边"}</span>
-          <input id="placementSecondary" class="number-control" type="number" min="${controls.secondaryMin ?? 0}" max="${controls.secondaryMax ?? 180}" step="${controls.secondaryStep ?? 1}" value="${controls.secondaryValue ?? 80}" />
+          <input id="placementSecondary" class="number-control" type="number" min="${controls.secondaryMin ?? 0}" max="${controls.secondaryMax ?? 180}" step="${controls.secondaryStep ?? 1}" value="${controls.secondaryValue ?? 80}" ${lockSecondary ? "disabled" : ""} />
         </label>
-        <label class="placement-control ${controls.showSides ? "" : "field--hidden"}">
+        <label class="placement-control ${controls.showSides ? "" : "field--hidden"} ${lockSides ? "placement-control--locked" : ""}">
           <span>边数</span>
-          <input id="placementSides" class="number-control" type="number" min="3" max="12" step="1" value="${layout.sides}" />
+          <input id="placementSides" class="number-control" type="number" min="3" max="12" step="1" value="${layout.sides}" ${lockSides ? "disabled" : ""} />
         </label>
         <label class="placement-control ${layoutMode === "free" ? "" : "field--hidden"}">
           <span>旋转角度</span>
           <input id="placementRotation" class="number-control" type="number" min="-180" max="180" step="0.1" value="${layout.rotation}" />
         </label>
-        <label class="placement-control placement-control--toggle ${layoutMode === "free" && layout.shape === "rectangle" ? "" : "field--hidden"}">
-          <span>四角微调</span>
+        <label class="placement-control placement-control--toggle ${fineTuneEnabled ? "" : "field--hidden"}">
+          <span>${layout.shape === "polygon" ? "顶点微调" : "四角微调"}</span>
           <input id="placementFineTune" type="checkbox" ${layout.fineTune ? "checked" : ""} />
         </label>
       </div>
@@ -2889,8 +3103,8 @@ function bindPlacementStage(backgroundItem) {
       const view = views[index] || views[0];
       const dimensions = placementDimensions(layout, fixedScaleMultiplier);
       const scale = view.r / 0.34;
-      const cornerTune = layoutMode === "free" && layout.shape === "rectangle" && layout.fineTune;
-      shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"} ${cornerTune ? "placement-stage-shape--fine-tune" : ""}`;
+      const fineTuneActive = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon");
+      shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"} ${fineTuneActive ? "placement-stage-shape--fine-tune" : ""}`;
       shape.style.left = `${(view.cx * 100).toFixed(3)}%`;
       shape.style.top = `${(view.cy * 100).toFixed(3)}%`;
       shape.style.width = `${clamp(dimensions.width * scale * (view.x ?? 1), 0, 98)}%`;
@@ -2898,14 +3112,20 @@ function bindPlacementStage(backgroundItem) {
       shape.style.setProperty("--shape-rotate", `${view.rot || 0}rad`);
       shape.style.setProperty("--polygon-path", regularPolygonClipPath(layout.sides));
       const polygon = shape.querySelector(".placement-outline-svg--polygon polygon");
-      if (polygon) polygon.setAttribute("points", regularPolygonSvgPoints(layout.sides));
+      if (polygon) polygon.setAttribute("points", fineTuneActive && layout.shape === "polygon" ? placementPolygonSvgPoints(layout, dimensions) : regularPolygonSvgPoints(layout.sides));
       const quadPolygon = shape.querySelector(".placement-quad-svg polygon");
       if (quadPolygon) quadPolygon.setAttribute("points", placementQuadSvgPoints(layout, dimensions));
-      const corners = placementQuadCorners(layout);
       shape.querySelectorAll(".placement-corner-handle").forEach((handle) => {
-        const corner = handle.dataset.corner;
-        if (!corners[corner]) return;
-        const point = placementPointToElementPercent(corners[corner], dimensions);
+        let point = null;
+        if (handle.dataset.corner) {
+          const corners = placementQuadCorners(layout);
+          point = corners[handle.dataset.corner] ? placementPointToElementPercent(corners[handle.dataset.corner], dimensions) : null;
+        } else if (handle.dataset.pointIndex) {
+          const points = placementPolygonPoints(layout);
+          const pointIndex = Number(handle.dataset.pointIndex);
+          point = points[pointIndex] ? placementPointToElementPercent(points[pointIndex], dimensions) : null;
+        }
+        if (!point) return;
         handle.style.left = `${point.x}%`;
         handle.style.top = `${point.y}%`;
       });
@@ -2917,6 +3137,12 @@ function bindPlacementStage(backgroundItem) {
     fixedScaleInput.value = layout.fixedScale;
     fineTuneInput.checked = layout.fineTune;
     fixedScaleLabel.textContent = layout.fixedScale;
+    const lockPrimary = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon");
+    const lockSecondary = layoutMode === "free" && layout.fineTune && layout.shape === "rectangle";
+    const lockSides = layoutMode === "free" && layout.fineTune && layout.shape === "polygon";
+    primaryInput.disabled = lockPrimary;
+    secondaryInput.disabled = lockSecondary;
+    sidesInput.disabled = lockSides;
   };
 
   const savePlacementChange = (message) => {
@@ -2943,9 +3169,14 @@ function bindPlacementStage(backgroundItem) {
     cornerHandles.forEach((handle) => {
       let isDraggingCorner = false;
       const corner = handle.dataset.corner;
+      const pointIndex = handle.dataset.pointIndex;
       const moveCorner = (event) => {
         const point = pointerToCanvasPercent(event);
-        backgroundItem.freeLayout = fitPlacementRectangleCorner(placementLayoutForBackground(backgroundItem), corner, point);
+        const layout = placementLayoutForBackground(backgroundItem);
+        backgroundItem.freeLayout =
+          typeof corner === "string"
+            ? fitPlacementRectangleCorner(layout, corner, point)
+            : fitPlacementPolygonPoint(layout, pointIndex, point);
         updateShapeElement();
       };
 
@@ -2968,7 +3199,7 @@ function bindPlacementStage(backgroundItem) {
         event.stopPropagation();
         isDraggingCorner = false;
         handle.releasePointerCapture(event.pointerId);
-        savePlacementChange("矩形四角已微调，可以重新生成");
+        savePlacementChange(corner ? "矩形四角已微调，可以重新生成" : "多边形顶点已微调，可以重新生成");
       });
       handle.addEventListener("pointercancel", () => {
         isDraggingCorner = false;
@@ -3009,21 +3240,23 @@ function bindPlacementStage(backgroundItem) {
     const layout = placementLayoutForBackground(backgroundItem);
     backgroundItem.freeLayout = { ...layout, fineTune: event.target.checked };
     clearRendered();
-    updateUi(event.target.checked ? "四角微调已开启" : "四角微调已关闭");
+    updateUi(event.target.checked ? (layout.shape === "polygon" ? "顶点微调已开启，边长和边数已锁定" : "四角微调已开启，长和宽已锁定") : "微调已关闭");
     paintPlacementStage(backgroundItem);
   });
 
   primaryInput.addEventListener("input", (event) => {
     const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));
     const layout = placementLayoutForBackground(backgroundItem);
+    if (layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon")) return;
     const controls = placementControlModel(layout);
-    backgroundItem.freeLayout = { ...layout, [controls.primaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners };
+    backgroundItem.freeLayout = { ...layout, [controls.primaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners, polygonPoints: layout.shape === "polygon" ? null : layout.polygonPoints };
     updateShapeElement();
     savePlacementChange(`${controls.primaryLabel}已更新，可以重新生成`);
   });
 
   secondaryInput.addEventListener("input", (event) => {
     const layout = placementLayoutForBackground(backgroundItem);
+    if (layoutMode === "free" && layout.fineTune && layout.shape === "rectangle") return;
     const controls = placementControlModel(layout);
     if (!controls.secondaryKey) return;
     const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));
@@ -3034,7 +3267,8 @@ function bindPlacementStage(backgroundItem) {
 
   sidesInput.addEventListener("input", (event) => {
     const layout = placementLayoutForBackground(backgroundItem);
-    backgroundItem.freeLayout = { ...layout, sides: clamp(Number(event.target.value), 3, 12) };
+    if (layoutMode === "free" && layout.fineTune && layout.shape === "polygon") return;
+    backgroundItem.freeLayout = { ...layout, sides: clamp(Number(event.target.value), 3, 12), polygonPoints: null };
     updateShapeElement();
     savePlacementChange("正多边形边数已更新，可以重新生成");
   });
