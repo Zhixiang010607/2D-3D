@@ -824,11 +824,10 @@ input[type="range"] {
   display: block;
   overflow: visible;
   pointer-events: none;
-  filter: drop-shadow(0 18px 22px rgba(19, 33, 27, 0.18));
 }
 
 .placement-quad-svg polygon {
-  fill: rgba(255, 255, 255, 0.72);
+  fill: transparent;
   stroke: #111;
   stroke-width: 3;
   vector-effect: non-scaling-stroke;

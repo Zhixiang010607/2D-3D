@@ -1139,6 +1139,38 @@ function quadBounds(points) {
   };
 }
 
+function quadTextureAspect(layout) {
+  const corners = placementQuadCorners(layout);
+  const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const top = distance(corners.tl, corners.tr);
+  const bottom = distance(corners.bl, corners.br);
+  const left = distance(corners.tl, corners.bl);
+  const right = distance(corners.tr, corners.br);
+  const width = Math.max(1, (top + bottom) / 2);
+  const height = Math.max(1, (left + right) / 2);
+  return width / height;
+}
+
+function coverSourceRect(image, targetAspect) {
+  const imageAspect = image.width / image.height;
+  if (imageAspect > targetAspect) {
+    const width = image.height * targetAspect;
+    return {
+      x: (image.width - width) / 2,
+      y: 0,
+      width,
+      height: image.height,
+    };
+  }
+  const height = image.width / targetAspect;
+  return {
+    x: 0,
+    y: (image.height - height) / 2,
+    width: image.width,
+    height,
+  };
+}
+
 function interpolateQuadPoint(points, u, v) {
   const top = {
     x: points.tl.x + (points.tr.x - points.tl.x) * u,
@@ -1197,7 +1229,7 @@ function drawImageTriangle(ctx, image, source, target) {
   ctx.restore();
 }
 
-function drawImageWarpedToQuad(ctx, image, points, steps = 16) {
+function drawImageWarpedToQuad(ctx, image, points, sourceRect, steps = 16) {
   for (let y = 0; y < steps; y += 1) {
     const v0 = y / steps;
     const v1 = (y + 1) / steps;
@@ -1208,10 +1240,10 @@ function drawImageWarpedToQuad(ctx, image, points, steps = 16) {
       const p10 = interpolateQuadPoint(points, u1, v0);
       const p11 = interpolateQuadPoint(points, u1, v1);
       const p01 = interpolateQuadPoint(points, u0, v1);
-      const s00 = { x: image.width * u0, y: image.height * v0 };
-      const s10 = { x: image.width * u1, y: image.height * v0 };
-      const s11 = { x: image.width * u1, y: image.height * v1 };
-      const s01 = { x: image.width * u0, y: image.height * v1 };
+      const s00 = { x: sourceRect.x + sourceRect.width * u0, y: sourceRect.y + sourceRect.height * v0 };
+      const s10 = { x: sourceRect.x + sourceRect.width * u1, y: sourceRect.y + sourceRect.height * v0 };
+      const s11 = { x: sourceRect.x + sourceRect.width * u1, y: sourceRect.y + sourceRect.height * v1 };
+      const s01 = { x: sourceRect.x + sourceRect.width * u0, y: sourceRect.y + sourceRect.height * v1 };
       drawImageTriangle(ctx, image, [s00, s10, s11], [p00, p10, p11]);
       drawImageTriangle(ctx, image, [s00, s11, s01], [p00, p11, p01]);
     }
@@ -1222,6 +1254,7 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
   const normalized = normalizePlacementLayout(layout);
   const points = placementQuadCanvasPoints(normalized, size);
   const bounds = quadBounds(points);
+  const sourceRect = coverSourceRect(image, quadTextureAspect(normalized));
   const rotation = placementRotationRad(normalized);
   const offsetX = Math.cos(rotation) * depth * 0.98 - Math.sin(rotation) * depth * 0.72;
   const offsetY = Math.sin(rotation) * depth * 0.98 + Math.cos(rotation) * depth * 0.72;
@@ -1271,7 +1304,7 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
   ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-  drawImageWarpedToQuad(ctx, image, points, size > 2600 ? 18 : 14);
+  drawImageWarpedToQuad(ctx, image, points, sourceRect, size > 2600 ? 28 : 22);
   ctx.filter = "none";
   const shade = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
   shade.addColorStop(0, "rgba(255,255,255,0.08)");
