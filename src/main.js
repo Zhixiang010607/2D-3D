@@ -828,8 +828,13 @@ function createDefaultPlacement(shape = "circle") {
     fixedScale: 100,
     rotation: 0,
     fineTune: false,
+    quadCorners: null,
   };
 }
+
+const PLACEMENT_DIMENSION_SCALE = 0.68;
+const PLACEMENT_QUAD_LIMIT = 120;
+const PLACEMENT_QUAD_CORNERS = ["tl", "tr", "br", "bl"];
 
 function normalizePlacementLayout(layout) {
   const base = { ...createDefaultPlacement(), ...(layout || {}) };
@@ -844,6 +849,13 @@ function normalizePlacementLayout(layout) {
   base.fixedScale = clamp(numberOr(base.fixedScale, 100), 0, 180);
   base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
   base.fineTune = Boolean(base.fineTune) && base.shape === "rectangle";
+  base.quadCorners =
+    base.shape === "rectangle"
+      ? normalizePlacementQuadCorners(base.quadCorners, {
+          width: clamp(base.rectLength * PLACEMENT_DIMENSION_SCALE, 0, 94),
+          height: clamp(base.rectWidth * PLACEMENT_DIMENSION_SCALE, 0, 94),
+        })
+      : null;
   if (base.shortAxis > base.longAxis) [base.longAxis, base.shortAxis] = [base.shortAxis, base.longAxis];
   return base;
 }
@@ -870,8 +882,44 @@ function placementRawDimensions(layout) {
 function placementDimensions(layout, scaleMultiplier = 1) {
   const raw = placementRawDimensions(layout);
   return {
-    width: clamp(raw.width * 0.68 * scaleMultiplier, 0, 94),
-    height: clamp(raw.height * 0.68 * scaleMultiplier, 0, 94),
+    width: clamp(raw.width * PLACEMENT_DIMENSION_SCALE * scaleMultiplier, 0, 94),
+    height: clamp(raw.height * PLACEMENT_DIMENSION_SCALE * scaleMultiplier, 0, 94),
+  };
+}
+
+function defaultPlacementQuadCorners(dimensions) {
+  const halfWidth = dimensions.width / 2;
+  const halfHeight = dimensions.height / 2;
+  return {
+    tl: { x: -halfWidth, y: -halfHeight },
+    tr: { x: halfWidth, y: -halfHeight },
+    br: { x: halfWidth, y: halfHeight },
+    bl: { x: -halfWidth, y: halfHeight },
+  };
+}
+
+function normalizePlacementQuadCorners(corners, dimensions) {
+  const fallback = defaultPlacementQuadCorners(dimensions);
+  const source = corners && typeof corners === "object" ? corners : {};
+  return PLACEMENT_QUAD_CORNERS.reduce((result, key) => {
+    const point = source[key] || fallback[key];
+    result[key] = {
+      x: clamp(numberOr(point.x, fallback[key].x), -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+      y: clamp(numberOr(point.y, fallback[key].y), -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+    };
+    return result;
+  }, {});
+}
+
+function placementQuadCorners(layout) {
+  const normalized = normalizePlacementLayout(layout);
+  return normalizePlacementQuadCorners(normalized.quadCorners, placementDimensions(normalized));
+}
+
+function placementPointToElementPercent(point, dimensions) {
+  return {
+    x: dimensions.width > 0 ? 50 + (point.x / dimensions.width) * 100 : 50,
+    y: dimensions.height > 0 ? 50 + (point.y / dimensions.height) * 100 : 50,
   };
 }
 
@@ -1000,16 +1048,16 @@ function placementRotationRad(layout) {
   return (normalizePlacementLayout(layout).rotation * Math.PI) / 180;
 }
 
-function placementCornerSign(corner) {
-  return {
-    tl: { x: -1, y: -1 },
-    tr: { x: 1, y: -1 },
-    br: { x: 1, y: 1 },
-    bl: { x: -1, y: 1 },
-  }[corner] || { x: 1, y: 1 };
+function placementQuadSvgPoints(layout, dimensions) {
+  const corners = placementQuadCorners(layout);
+  return PLACEMENT_QUAD_CORNERS.map((corner) => {
+    const point = placementPointToElementPercent(corners[corner], dimensions);
+    return `${point.x.toFixed(3)},${point.y.toFixed(3)}`;
+  }).join(" ");
 }
 
-function placementCornerHandlesMarkup() {
+function placementCornerHandlesMarkup(layout, dimensions) {
+  const corners = placementQuadCorners(layout);
   const labels = {
     tl: "左上角",
     tr: "右上角",
@@ -1018,54 +1066,257 @@ function placementCornerHandlesMarkup() {
   };
   return Object.entries(labels)
     .map(
-      ([corner, label]) =>
-        `<button class="placement-corner-handle" type="button" data-corner="${corner}" aria-label="微调${label}"></button>`,
+      ([corner, label]) => {
+        const point = placementPointToElementPercent(corners[corner], dimensions);
+        return `<button class="placement-corner-handle" type="button" data-corner="${corner}" aria-label="微调${label}" style="left: ${point.x}%; top: ${point.y}%;"></button>`;
+      },
     )
     .join("");
 }
 
 function fitPlacementRectangleCorner(layout, corner, point) {
   const normalized = normalizePlacementLayout(layout);
-  const sign = placementCornerSign(corner);
-  const dimensions = placementDimensions(normalized);
+  const localPoint = localPointFromCanvasPercent(normalized, point);
+  const nextCorners = {
+    ...placementQuadCorners(normalized),
+    [corner]: {
+      x: clamp(localPoint.x, -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+      y: clamp(localPoint.y, -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+    },
+  };
+  return normalizePlacementLayout({
+    ...normalized,
+    fineTune: true,
+    quadCorners: nextCorners,
+  });
+}
+
+function placementQuadCanvasPoints(layout, size) {
+  const normalized = normalizePlacementLayout(layout);
   const rotation = placementRotationRad(normalized);
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
-  const rotatePoint = (x, y) => ({
-    x: x * cos - y * sin,
-    y: x * sin + y * cos,
-  });
-  const oppositeLocal = {
-    x: -sign.x * (dimensions.width / 2),
-    y: -sign.y * (dimensions.height / 2),
+  const center = {
+    x: (normalized.x / 100) * size,
+    y: (normalized.y / 100) * size,
   };
-  const oppositeOffset = rotatePoint(oppositeLocal.x, oppositeLocal.y);
-  const opposite = {
-    x: normalized.x + oppositeOffset.x,
-    y: normalized.y + oppositeOffset.y,
+  const corners = placementQuadCorners(normalized);
+  return PLACEMENT_QUAD_CORNERS.reduce((result, key) => {
+    const local = {
+      x: (corners[key].x / 100) * size,
+      y: (corners[key].y / 100) * size,
+    };
+    result[key] = {
+      x: center.x + local.x * cos - local.y * sin,
+      y: center.y + local.x * sin + local.y * cos,
+    };
+    return result;
+  }, {});
+}
+
+function traceQuad(ctx, points) {
+  ctx.moveTo(points.tl.x, points.tl.y);
+  ctx.lineTo(points.tr.x, points.tr.y);
+  ctx.lineTo(points.br.x, points.br.y);
+  ctx.lineTo(points.bl.x, points.bl.y);
+  ctx.closePath();
+}
+
+function offsetQuad(points, dx, dy) {
+  return PLACEMENT_QUAD_CORNERS.reduce((result, key) => {
+    result[key] = { x: points[key].x + dx, y: points[key].y + dy };
+    return result;
+  }, {});
+}
+
+function quadBounds(points) {
+  const values = PLACEMENT_QUAD_CORNERS.map((key) => points[key]);
+  return {
+    minX: Math.min(...values.map((point) => point.x)),
+    maxX: Math.max(...values.map((point) => point.x)),
+    minY: Math.min(...values.map((point) => point.y)),
+    maxY: Math.max(...values.map((point) => point.y)),
   };
+}
+
+function interpolateQuadPoint(points, u, v) {
+  const top = {
+    x: points.tl.x + (points.tr.x - points.tl.x) * u,
+    y: points.tl.y + (points.tr.y - points.tl.y) * u,
+  };
+  const bottom = {
+    x: points.bl.x + (points.br.x - points.bl.x) * u,
+    y: points.bl.y + (points.br.y - points.bl.y) * u,
+  };
+  return {
+    x: top.x + (bottom.x - top.x) * v,
+    y: top.y + (bottom.y - top.y) * v,
+  };
+}
+
+function triangleTransform(source, target) {
+  const [s0, s1, s2] = source;
+  const [t0, t1, t2] = target;
+  const denominator = s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y);
+  if (Math.abs(denominator) < 0.0001) return null;
+  return {
+    a: (t0.x * (s1.y - s2.y) + t1.x * (s2.y - s0.y) + t2.x * (s0.y - s1.y)) / denominator,
+    b: (t0.y * (s1.y - s2.y) + t1.y * (s2.y - s0.y) + t2.y * (s0.y - s1.y)) / denominator,
+    c: (t0.x * (s2.x - s1.x) + t1.x * (s0.x - s2.x) + t2.x * (s1.x - s0.x)) / denominator,
+    d: (t0.y * (s2.x - s1.x) + t1.y * (s0.x - s2.x) + t2.y * (s1.x - s0.x)) / denominator,
+    e:
+      (t0.x * (s1.x * s2.y - s2.x * s1.y) +
+        t1.x * (s2.x * s0.y - s0.x * s2.y) +
+        t2.x * (s0.x * s1.y - s1.x * s0.y)) /
+      denominator,
+    f:
+      (t0.y * (s1.x * s2.y - s2.x * s1.y) +
+        t1.y * (s2.x * s0.y - s0.x * s2.y) +
+        t2.y * (s0.x * s1.y - s1.x * s0.y)) /
+      denominator,
+  };
+}
+
+function drawImageTriangle(ctx, image, source, target) {
+  const transform = triangleTransform(source, target);
+  if (!transform) return;
+  const minX = Math.max(0, Math.floor(Math.min(...source.map((point) => point.x)) - 1));
+  const minY = Math.max(0, Math.floor(Math.min(...source.map((point) => point.y)) - 1));
+  const maxX = Math.min(image.width, Math.ceil(Math.max(...source.map((point) => point.x)) + 1));
+  const maxY = Math.min(image.height, Math.ceil(Math.max(...source.map((point) => point.y)) + 1));
+  if (maxX <= minX || maxY <= minY) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(target[0].x, target[0].y);
+  ctx.lineTo(target[1].x, target[1].y);
+  ctx.lineTo(target[2].x, target[2].y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.setTransform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
+  ctx.drawImage(image, minX, minY, maxX - minX, maxY - minY, minX, minY, maxX - minX, maxY - minY);
+  ctx.restore();
+}
+
+function drawImageWarpedToQuad(ctx, image, points, steps = 16) {
+  for (let y = 0; y < steps; y += 1) {
+    const v0 = y / steps;
+    const v1 = (y + 1) / steps;
+    for (let x = 0; x < steps; x += 1) {
+      const u0 = x / steps;
+      const u1 = (x + 1) / steps;
+      const p00 = interpolateQuadPoint(points, u0, v0);
+      const p10 = interpolateQuadPoint(points, u1, v0);
+      const p11 = interpolateQuadPoint(points, u1, v1);
+      const p01 = interpolateQuadPoint(points, u0, v1);
+      const s00 = { x: image.width * u0, y: image.height * v0 };
+      const s10 = { x: image.width * u1, y: image.height * v0 };
+      const s11 = { x: image.width * u1, y: image.height * v1 };
+      const s01 = { x: image.width * u0, y: image.height * v1 };
+      drawImageTriangle(ctx, image, [s00, s10, s11], [p00, p10, p11]);
+      drawImageTriangle(ctx, image, [s00, s11, s01], [p00, p11, p01]);
+    }
+  }
+}
+
+function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, material) {
+  const normalized = normalizePlacementLayout(layout);
+  const points = placementQuadCanvasPoints(normalized, size);
+  const bounds = quadBounds(points);
+  const rotation = placementRotationRad(normalized);
+  const offsetX = Math.cos(rotation) * depth * 0.98 - Math.sin(rotation) * depth * 0.72;
+  const offsetY = Math.sin(rotation) * depth * 0.98 + Math.cos(rotation) * depth * 0.72;
+
+  if (shadow > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.46 * shadow;
+    ctx.filter = `blur(${Math.max(18, depth * 1.24)}px)`;
+    ctx.fillStyle = "rgba(32,38,36,0.68)";
+    ctx.beginPath();
+    traceQuad(ctx, offsetQuad(points, offsetX * 1.14, offsetY * 1.32));
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (depth > 0.5) {
+    const base = hexToRgb(state.options.edgeColor || "#8f9188");
+    const layers = Math.max(22, Math.round(depth * 1.1));
+    for (let i = layers; i >= 1; i -= 1) {
+      const t = i / layers;
+      const edgePoints = offsetQuad(points, offsetX * t, offsetY * t);
+      const edgeBounds = quadBounds(edgePoints);
+      const edge = ctx.createLinearGradient(edgeBounds.minX, edgeBounds.minY, edgeBounds.maxX, edgeBounds.maxY);
+      if (material === "metal") {
+        edge.addColorStop(0, rgbString(tint(base, 0.42)));
+        edge.addColorStop(0.48, rgbString(shadeColor(base, 0.2)));
+        edge.addColorStop(1, rgbString(shadeColor(base, 0.46)));
+      } else {
+        edge.addColorStop(0, rgbString(tint(base, 0.48)));
+        edge.addColorStop(0.54, rgbString(tint(base, 0.1)));
+        edge.addColorStop(1, rgbString(shadeColor(base, 0.48)));
+      }
+      ctx.save();
+      ctx.globalAlpha = 0.72 + 0.2 * (1 - t);
+      ctx.fillStyle = edge;
+      ctx.beginPath();
+      traceQuad(ctx, edgePoints);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  traceQuad(ctx, points);
+  ctx.clip();
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+  ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
+  drawImageWarpedToQuad(ctx, image, points, size > 2600 ? 18 : 14);
+  ctx.filter = "none";
+  const shade = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
+  shade.addColorStop(0, "rgba(255,255,255,0.08)");
+  shade.addColorStop(0.58, "rgba(255,255,255,0)");
+  shade.addColorStop(1, "rgba(0,0,0,0.12)");
+  ctx.fillStyle = shade;
+  ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+  if (material === "acrylic") {
+    const gloss = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.minY + (bounds.maxY - bounds.minY) * 0.5);
+    gloss.addColorStop(0, `rgba(255,255,255,${0.08 + shine * 0.1})`);
+    gloss.addColorStop(0.44, `rgba(255,255,255,${0.02 + shine * 0.04})`);
+    gloss.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gloss;
+    ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(255,255,255,0.7)";
+  ctx.lineWidth = Math.max(1.5, size * 0.0016);
+  ctx.beginPath();
+  traceQuad(ctx, points);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(0,0,0,0.32)";
+  ctx.lineWidth = Math.max(1.2, size * 0.0012);
+  ctx.beginPath();
+  traceQuad(ctx, points);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function localPointFromCanvasPercent(layout, point) {
+  const normalized = normalizePlacementLayout(layout);
+  const rotation = placementRotationRad(normalized);
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
   const delta = {
-    x: point.x - opposite.x,
-    y: point.y - opposite.y,
+    x: point.x - normalized.x,
+    y: point.y - normalized.y,
   };
-  const localDelta = {
+  return {
     x: delta.x * cos + delta.y * sin,
     y: -delta.x * sin + delta.y * cos,
   };
-  const width = clamp(Math.abs(localDelta.x), 1, 94);
-  const height = clamp(Math.abs(localDelta.y), 1, 94);
-  const centerLocal = {
-    x: sign.x * (width / 2),
-    y: sign.y * (height / 2),
-  };
-  const centerOffset = rotatePoint(centerLocal.x, centerLocal.y);
-  return normalizePlacementLayout({
-    ...normalized,
-    x: clamp(opposite.x + centerOffset.x, 0, 100),
-    y: clamp(opposite.y + centerOffset.y, 0, 100),
-    rectLength: width / 0.68,
-    rectWidth: height / 0.68,
-  });
 }
 
 function getLayoutPlaceholderViews(layoutMode) {
@@ -1149,7 +1400,9 @@ function placementShapeMarkup(layout, view, options = {}) {
   const content =
     layout.shape === "polygon"
       ? `<svg class="placement-polygon-svg" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${regularPolygonSvgPoints(layout.sides)}"></polygon></svg>`
-      : `<span></span>${cornerTune ? placementCornerHandlesMarkup() : ""}`;
+      : cornerTune
+        ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" aria-hidden="true"><polygon points="${placementQuadSvgPoints(layout, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(layout, dimensions)}`
+        : `<span></span>`;
   return `
     <div
       class="${classes}"
@@ -1269,31 +1522,35 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
   const productScale = layoutMode === "free" ? 1 : (placementRenderRadius(placementLayout) / 0.34) * (placementLayout.fixedScale / 100);
 
   if (layoutMode === "free") {
-    const radius = placementRenderRadius(placementLayout);
-    if (radius > 0) {
-      const viewDepth = 1.16;
-      drawBadgeView(
-        ctx,
-        source,
-        size,
-        {
-          cx: placementLayout.x / 100,
-          cy: placementLayout.y / 100,
-          r: radius,
-          depth: viewDepth,
-          x: 1,
-          y: 1,
-          yaw: 0,
-          rot: placementRotationRad(placementLayout),
-          primary: true,
-        },
-        depth,
-        shadow,
-        shine,
-        options.material,
-        productScale,
-        renderShapeModel,
-      );
+    if (placementLayout.shape === "rectangle" && placementLayout.fineTune) {
+      drawQuadProductView(ctx, source, size, placementLayout, depth * 1.16, shadow, shine, options.material);
+    } else {
+      const radius = placementRenderRadius(placementLayout);
+      if (radius > 0) {
+        const viewDepth = 1.16;
+        drawBadgeView(
+          ctx,
+          source,
+          size,
+          {
+            cx: placementLayout.x / 100,
+            cy: placementLayout.y / 100,
+            r: radius,
+            depth: viewDepth,
+            x: 1,
+            y: 1,
+            yaw: 0,
+            rot: placementRotationRad(placementLayout),
+            primary: true,
+          },
+          depth,
+          shadow,
+          shine,
+          options.material,
+          productScale,
+          renderShapeModel,
+        );
+      }
     }
   } else if (productScale <= 0) {
     // A fixed overall scale of 0 means render only the background and optional label.
@@ -2536,8 +2793,18 @@ function bindPlacementStage(backgroundItem) {
       shape.style.height = `${clamp(dimensions.height * scale * (view.y ?? 1), 0, 98)}%`;
       shape.style.setProperty("--shape-rotate", `${view.rot || 0}rad`);
       shape.style.setProperty("--polygon-path", regularPolygonClipPath(layout.sides));
-      const polygon = shape.querySelector("polygon");
+      const polygon = shape.querySelector(".placement-polygon-svg polygon");
       if (polygon) polygon.setAttribute("points", regularPolygonSvgPoints(layout.sides));
+      const quadPolygon = shape.querySelector(".placement-quad-svg polygon");
+      if (quadPolygon) quadPolygon.setAttribute("points", placementQuadSvgPoints(layout, dimensions));
+      const corners = placementQuadCorners(layout);
+      shape.querySelectorAll(".placement-corner-handle").forEach((handle) => {
+        const corner = handle.dataset.corner;
+        if (!corners[corner]) return;
+        const point = placementPointToElementPercent(corners[corner], dimensions);
+        handle.style.left = `${point.x}%`;
+        handle.style.top = `${point.y}%`;
+      });
     });
     primaryInput.value = controls.primaryValue;
     secondaryInput.value = controls.secondaryValue || 0;
@@ -2646,7 +2913,7 @@ function bindPlacementStage(backgroundItem) {
     const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));
     const layout = placementLayoutForBackground(backgroundItem);
     const controls = placementControlModel(layout);
-    backgroundItem.freeLayout = { ...layout, [controls.primaryKey]: value };
+    backgroundItem.freeLayout = { ...layout, [controls.primaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners };
     updateShapeElement();
     savePlacementChange(`${controls.primaryLabel}已更新，可以重新生成`);
   });
@@ -2656,7 +2923,7 @@ function bindPlacementStage(backgroundItem) {
     const controls = placementControlModel(layout);
     if (!controls.secondaryKey) return;
     const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));
-    backgroundItem.freeLayout = { ...layout, [controls.secondaryKey]: value };
+    backgroundItem.freeLayout = { ...layout, [controls.secondaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners };
     updateShapeElement();
     savePlacementChange(`${controls.secondaryLabel}已更新，可以重新生成`);
   });
