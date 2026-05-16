@@ -524,11 +524,11 @@ async function renderPreview({ forceProductPreview = false } = {}) {
     paintEmptyStage();
     return;
   }
-  const previewOptions = { ...state.options, size: Math.min(state.options.size, PREVIEW_MAX_SIZE) };
+  const previewOptions = { ...state.options, size: Math.min(state.options.size, PREVIEW_MAX_SIZE), badge: false };
   const blob = await renderProduct(previewProductItem.file, previewOptions, previewBackground);
   revokePreview();
   state.previewUrl = URL.createObjectURL(blob);
-  paintPreview(state.previewUrl);
+  paintPreview(state.previewUrl, { interactiveBadge: state.options.badge });
 }
 
 async function renderAll() {
@@ -1086,6 +1086,58 @@ function paintBadgeMarkerCanvases(root = document) {
     ctx.clearRect(0, 0, size, size);
     drawBadgeShape(ctx, size / 2, size / 2, radius, virtualSize);
   });
+}
+
+function bindBadgeMarkerDrag(container, badgeMarker, message = "2D FLAT 标识位置已更新，可以重新生成") {
+  if (!container || !badgeMarker) return;
+  let isDraggingBadge = false;
+  const pointerToContainerPercent = (event) => {
+    const rect = container.getBoundingClientRect();
+    const left = rect.left + container.clientLeft;
+    const top = rect.top + container.clientTop;
+    const width = container.clientWidth || rect.width;
+    const height = container.clientHeight || rect.height;
+    return {
+      x: clamp(((event.clientX - left) / width) * 100, 0, 100),
+      y: clamp(((event.clientY - top) / height) * 100, 0, 100),
+    };
+  };
+  const moveBadge = (event) => {
+    const { x, y } = pointerToContainerPercent(event);
+    const { min, max } = badgePositionBounds();
+    state.options.badgeX = clamp(Math.round(x * 10) / 10, min, max);
+    state.options.badgeY = clamp(Math.round(y * 10) / 10, min, max);
+    badgeMarker.style.left = `${state.options.badgeX}%`;
+    badgeMarker.style.top = `${state.options.badgeY}%`;
+  };
+  const stopBadgeDrag = (event) => {
+    if (!isDraggingBadge) return;
+    isDraggingBadge = false;
+    if (event && typeof event.pointerId === "number" && badgeMarker.hasPointerCapture?.(event.pointerId)) {
+      badgeMarker.releasePointerCapture(event.pointerId);
+    }
+    clearRendered();
+    updateUi(message);
+  };
+
+  badgeMarker.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    isDraggingBadge = true;
+    badgeMarker.setPointerCapture(event.pointerId);
+    moveBadge(event);
+  });
+  badgeMarker.addEventListener("pointermove", (event) => {
+    if (!isDraggingBadge) return;
+    event.preventDefault();
+    event.stopPropagation();
+    moveBadge(event);
+  });
+  badgeMarker.addEventListener("pointerup", (event) => {
+    event.stopPropagation();
+    stopBadgeDrag(event);
+  });
+  badgeMarker.addEventListener("pointercancel", stopBadgeDrag);
 }
 
 async function renderProduct(file, options, backgroundItem) {
@@ -2350,44 +2402,7 @@ function bindPlacementStage(backgroundItem) {
     };
   };
 
-  if (badgeMarker) {
-    let isDraggingBadge = false;
-    const moveBadge = (event) => {
-      const { x, y } = pointerToCanvasPercent(event);
-      const { min, max } = badgePositionBounds();
-      state.options.badgeX = clamp(Math.round(x * 10) / 10, min, max);
-      state.options.badgeY = clamp(Math.round(y * 10) / 10, min, max);
-      badgeMarker.style.left = `${state.options.badgeX}%`;
-      badgeMarker.style.top = `${state.options.badgeY}%`;
-    };
-    const stopBadgeDrag = (event) => {
-      if (!isDraggingBadge) return;
-      isDraggingBadge = false;
-      if (event && typeof event.pointerId === "number" && badgeMarker.hasPointerCapture?.(event.pointerId)) {
-        badgeMarker.releasePointerCapture(event.pointerId);
-      }
-      savePlacementChange("2D FLAT 标识位置已更新，可以重新生成");
-    };
-
-    badgeMarker.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      isDraggingBadge = true;
-      badgeMarker.setPointerCapture(event.pointerId);
-      moveBadge(event);
-    });
-    badgeMarker.addEventListener("pointermove", (event) => {
-      if (!isDraggingBadge) return;
-      event.preventDefault();
-      event.stopPropagation();
-      moveBadge(event);
-    });
-    badgeMarker.addEventListener("pointerup", (event) => {
-      event.stopPropagation();
-      stopBadgeDrag(event);
-    });
-    badgeMarker.addEventListener("pointercancel", stopBadgeDrag);
-  }
+  bindBadgeMarkerDrag(canvas, badgeMarker);
 
   if (layoutMode === "free") {
     let isDragging = false;
@@ -2460,11 +2475,22 @@ function bindPlacementStage(backgroundItem) {
   });
 }
 
-function paintPreview(url) {
+function paintPreview(url, { interactiveBadge = false } = {}) {
   const stage = document.querySelector("#previewStage");
   stage.style.setProperty("--stage-bg", "#ffffff");
   stage.classList.remove("stage--checker", "stage--placement");
-  stage.innerHTML = `<img src="${url}" alt="3D preview" />`;
+  stage.innerHTML = `
+    <div class="preview-result-frame">
+      <img src="${url}" alt="3D preview" />
+      ${interactiveBadge ? badgeMarkerMarkup() : ""}
+    </div>
+  `;
+  if (interactiveBadge) {
+    const frame = stage.querySelector(".preview-result-frame");
+    const marker = stage.querySelector(".badge-marker");
+    paintBadgeMarkerCanvases(stage);
+    bindBadgeMarkerDrag(frame, marker);
+  }
 }
 
 function paintFileList(doneCount) {

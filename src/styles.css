@@ -666,10 +666,23 @@ input[type="range"] {
   background-size: 20px 20px;
 }
 
-.stage > img {
+.stage > img,
+.preview-result-frame {
   width: min(100%, 820px);
   aspect-ratio: 1;
+}
+
+.stage > img,
+.preview-result-frame > img {
+  width: 100%;
+  height: 100%;
   object-fit: contain;
+}
+
+.preview-result-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
 }
 
 .placement-workspace {
