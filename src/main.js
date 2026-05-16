@@ -163,16 +163,6 @@ app.innerHTML = `
         <p class="eyebrow">Batch Product Renderer</p>
         <h1>严宇杰老板专属小工具</h1>
         <p class="subcopy">上传本地图片或文件夹后，工具会把里面的图片生成圆形厚边、清晰高光和自然投影的 3D 展示图，并打包成 ZIP。</p>
-        <div class="actions">
-          <button id="renderBtn" class="secondary" disabled>
-            <span data-icon="sparkles"></span>
-            生成 3D 效果
-          </button>
-          <button id="downloadBtn" class="secondary" disabled>
-            <span data-icon="download"></span>
-            下载 ZIP
-          </button>
-        </div>
       </div>
       <div class="hero__visual">
         <img src="./3d/661.jpeg" alt="3D product reference" />
@@ -248,11 +238,6 @@ app.innerHTML = `
             <input id="depth" type="range" min="0" max="90" step="2" value="4" />
           </div>
 
-          <div class="field">
-            <label for="edgeColor">边缘颜色</label>
-            <input id="edgeColor" class="color-control" type="color" value="#8f9188" />
-          </div>
-
           <label class="toggle">
             <input id="badge" type="checkbox" />
             <span>添加可拖动 2D FLAT 标识</span>
@@ -279,6 +264,16 @@ app.innerHTML = `
             <span data-icon="image"></span>
             <p>上传 2D 图片后，这里会显示第一张转换预览。</p>
           </div>
+        </div>
+        <div class="preview-actions">
+          <button id="renderBtn" class="secondary" disabled>
+            <span data-icon="sparkles"></span>
+            生成 3D 效果
+          </button>
+          <button id="downloadBtn" class="secondary" disabled>
+            <span data-icon="download"></span>
+            下载 ZIP
+          </button>
         </div>
       </section>
 
@@ -347,7 +342,7 @@ function bindEvents() {
   document.querySelector("#backgroundFolderUpload").addEventListener("change", handleBackgroundFiles);
   document.querySelector("#productShape").addEventListener("change", handleProductShape);
 
-  ["size", "depth", "edgeColor", "badgeSize"].forEach((id) => {
+  ["size", "depth", "badgeSize"].forEach((id) => {
     document.querySelector(`#${id}`).addEventListener("input", (event) => {
       const value = event.target.type === "range" ? Number(event.target.value) : event.target.value;
       state.options[id] = value;
