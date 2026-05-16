@@ -39,18 +39,18 @@ svg {
 }
 
 .shell {
-  width: min(1440px, 100%);
+  width: min(1760px, 100%);
   margin: 0 auto;
-  padding: 28px;
+  padding: 16px;
 }
 
 .hero {
-  min-height: 420px;
+  min-height: 360px;
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(380px, 0.68fr);
   align-items: center;
-  gap: 48px;
-  padding: 44px 0 36px;
+  gap: 32px;
+  padding: 28px 0 28px;
 }
 
 .hero__copy {
@@ -155,8 +155,8 @@ h2 {
 
 .workbench {
   display: grid;
-  grid-template-columns: 300px minmax(420px, 1fr) 340px;
-  gap: 18px;
+  grid-template-columns: 280px minmax(560px, 1fr) 320px;
+  gap: 12px;
   align-items: start;
 }
 
@@ -171,7 +171,7 @@ h2 {
 
 .panel,
 .queue {
-  padding: 20px;
+  padding: 16px;
 }
 
 .panel__title {
@@ -596,13 +596,13 @@ input[type="range"] {
 }
 
 .preview__toolbar {
-  min-height: 82px;
+  min-height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid #dfe3de;
-  padding: 18px 20px;
+  padding: 14px 16px;
 }
 
 .pill {
@@ -617,10 +617,10 @@ input[type="range"] {
 
 .stage {
   --stage-bg: #fff;
-  min-height: 620px;
+  min-height: 680px;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 16px;
   background: var(--stage-bg);
 }
 
@@ -643,13 +643,13 @@ input[type="range"] {
 }
 
 .stage > img {
-  width: min(100%, 680px);
+  width: min(100%, 820px);
   aspect-ratio: 1;
   object-fit: contain;
 }
 
 .placement-workspace {
-  width: min(100%, 680px);
+  width: min(100%, 820px);
   display: grid;
   gap: 14px;
 }
