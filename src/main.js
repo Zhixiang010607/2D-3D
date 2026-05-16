@@ -207,18 +207,6 @@ app.innerHTML = `
           <p class="field-hint">选择图片文件夹后必须设置，所有背景都会使用同一种占位形状。</p>
         </div>
 
-        <div class="field product-files-field">
-          <div class="product-files-header">
-            <label>上传图片列表</label>
-            <span id="productFileCount" class="mini-count">0 / 0</span>
-          </div>
-          <div class="product-file-actions">
-            <button id="selectAllProducts" class="mini-button" type="button" disabled>全选</button>
-            <button id="clearProductFiles" class="mini-button mini-button--danger" type="button" disabled>清空上传图片</button>
-          </div>
-          <div id="productFileList" class="product-file-list"></div>
-        </div>
-
         <div class="field">
           <label>背景库</label>
           <div class="background-actions">
@@ -261,8 +249,20 @@ app.innerHTML = `
         <div class="render-controls">
           <div class="panel__title">
             <span data-icon="sliders"></span>
-          <h2>渲染参数</h2>
-        </div>
+            <h2>渲染参数</h2>
+          </div>
+
+          <div class="field product-files-field">
+            <div class="product-files-header">
+              <label>上传图片列表</label>
+              <span id="productFileCount" class="mini-count">0 / 0</span>
+            </div>
+            <div class="product-file-actions">
+              <button id="selectAllProducts" class="mini-button" type="button" disabled>全选</button>
+              <button id="clearProductFiles" class="mini-button mini-button--danger" type="button" disabled>清空上传图片</button>
+            </div>
+            <div id="productFileList" class="product-file-list"></div>
+          </div>
 
           <div class="field">
             <label for="size">输出尺寸 <b id="sizeValue">2400</b> × <b id="sizeValueY">2400</b> px</label>
@@ -2131,7 +2131,7 @@ function paintNoSelectedProductsStage() {
   stage.innerHTML = `
     <div class="empty">
       <span data-icon="image"></span>
-      <p>已上传图片。请先在左侧上传图片列表里勾选至少一张需要生成 3D 的图片。</p>
+      <p>已上传图片。请先在右侧上传图片列表里勾选至少一张需要生成 3D 的图片。</p>
     </div>
   `;
   renderIcons();
