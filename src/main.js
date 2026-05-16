@@ -830,6 +830,7 @@ function createDefaultPlacement(shape = "circle") {
     fixedScale: 100,
     rotation: 0,
     fineTune: false,
+    tuneLineColor: "black",
     quadCorners: null,
     polygonPoints: null,
   };
@@ -852,6 +853,7 @@ function normalizePlacementLayout(layout) {
   base.fixedScale = clamp(numberOr(base.fixedScale, 100), 0, 180);
   base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
   base.fineTune = Boolean(base.fineTune) && (base.shape === "rectangle" || base.shape === "polygon");
+  base.tuneLineColor = normalizeTuneLineColor(base.tuneLineColor);
   base.quadCorners =
     base.shape === "rectangle"
       ? normalizePlacementQuadCorners(base.quadCorners, {
@@ -1098,6 +1100,14 @@ function regularPolygonStartAngle(sides) {
 
 function placementRotationRad(layout) {
   return (normalizePlacementLayout(layout).rotation * Math.PI) / 180;
+}
+
+function normalizeTuneLineColor(value) {
+  return value === "white" || value === "#fff" || value === "#ffffff" ? "white" : "black";
+}
+
+function placementTuneLineColor(layout) {
+  return normalizeTuneLineColor(layout?.tuneLineColor) === "white" ? "#ffffff" : "#111111";
 }
 
 function placementQuadSvgPoints(layout, dimensions) {
@@ -1717,7 +1727,7 @@ function placementShapeMarkup(layout, view, options = {}) {
   return `
     <div
       class="${classes}"
-      style="left: ${(view.cx * 100).toFixed(3)}%; top: ${(view.cy * 100).toFixed(3)}%; width: ${width}%; height: ${height}%; --shape-rotate: ${view.rot || 0}rad; --polygon-path: ${regularPolygonClipPath(layout.sides)};"
+      style="left: ${(view.cx * 100).toFixed(3)}%; top: ${(view.cy * 100).toFixed(3)}%; width: ${width}%; height: ${height}%; --shape-rotate: ${view.rot || 0}rad; --polygon-path: ${regularPolygonClipPath(layout.sides)}; --tune-color: ${placementTuneLineColor(layout)};"
     >
       ${content}
     </div>
@@ -3068,6 +3078,13 @@ function paintPlacementStage(backgroundItem) {
           <span>${layout.shape === "polygon" ? "顶点微调" : "四角微调"}</span>
           <input id="placementFineTune" type="checkbox" ${layout.fineTune ? "checked" : ""} />
         </label>
+        <label class="placement-control ${fineTuneActive ? "" : "field--hidden"}">
+          <span>微调线色</span>
+          <select id="placementTuneLineColor" class="number-control">
+            <option value="black" ${layout.tuneLineColor === "black" ? "selected" : ""}>黑色</option>
+            <option value="white" ${layout.tuneLineColor === "white" ? "selected" : ""}>白色</option>
+          </select>
+        </label>
       </div>
     </div>
   `;
@@ -3085,10 +3102,11 @@ function bindPlacementStage(backgroundItem) {
   const rotationInput = stage.querySelector("#placementRotation");
   const fixedScaleInput = stage.querySelector("#placementFixedScale");
   const fineTuneInput = stage.querySelector("#placementFineTune");
+  const tuneLineColorInput = stage.querySelector("#placementTuneLineColor");
   const fixedScaleLabel = stage.querySelector("[data-placement-value='fixedScale']");
   const badgeMarker = stage.querySelector(".badge-marker");
   const layoutMode = getBackgroundLayoutMode(backgroundItem);
-  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !fixedScaleInput || !fineTuneInput || !fixedScaleLabel) return;
+  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !fixedScaleInput || !fineTuneInput || !tuneLineColorInput || !fixedScaleLabel) return;
 
   const updateShapeElement = () => {
     const layout = placementLayoutForBackground(backgroundItem);
@@ -3111,6 +3129,7 @@ function bindPlacementStage(backgroundItem) {
       shape.style.height = `${clamp(dimensions.height * scale * (view.y ?? 1), 0, 98)}%`;
       shape.style.setProperty("--shape-rotate", `${view.rot || 0}rad`);
       shape.style.setProperty("--polygon-path", regularPolygonClipPath(layout.sides));
+      shape.style.setProperty("--tune-color", placementTuneLineColor(layout));
       const polygon = shape.querySelector(".placement-outline-svg--polygon polygon");
       if (polygon) polygon.setAttribute("points", fineTuneActive && layout.shape === "polygon" ? placementPolygonSvgPoints(layout, dimensions) : regularPolygonSvgPoints(layout.sides));
       const quadPolygon = shape.querySelector(".placement-quad-svg polygon");
@@ -3136,6 +3155,7 @@ function bindPlacementStage(backgroundItem) {
     rotationInput.value = layout.rotation;
     fixedScaleInput.value = layout.fixedScale;
     fineTuneInput.checked = layout.fineTune;
+    tuneLineColorInput.value = layout.tuneLineColor;
     fixedScaleLabel.textContent = layout.fixedScale;
     const lockPrimary = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon");
     const lockSecondary = layoutMode === "free" && layout.fineTune && layout.shape === "rectangle";
@@ -3241,6 +3261,14 @@ function bindPlacementStage(backgroundItem) {
     backgroundItem.freeLayout = { ...layout, fineTune: event.target.checked };
     clearRendered();
     updateUi(event.target.checked ? (layout.shape === "polygon" ? "顶点微调已开启，边长和边数已锁定" : "四角微调已开启，长和宽已锁定") : "微调已关闭");
+    paintPlacementStage(backgroundItem);
+  });
+
+  tuneLineColorInput.addEventListener("change", (event) => {
+    const layout = placementLayoutForBackground(backgroundItem);
+    backgroundItem.freeLayout = { ...layout, tuneLineColor: normalizeTuneLineColor(event.target.value) };
+    clearRendered();
+    updateUi("微调线色已更新");
     paintPlacementStage(backgroundItem);
   });
 

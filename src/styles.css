@@ -812,7 +812,7 @@ input[type="range"] {
 .placement-outline-svg polygon,
 .placement-quad-svg polygon {
   fill: transparent;
-  stroke: #111;
+  stroke: var(--tune-color, #111);
   stroke-width: 3;
   vector-effect: non-scaling-stroke;
 }
@@ -823,10 +823,12 @@ input[type="range"] {
   width: 16px;
   height: 16px;
   padding: 0;
-  border: 2px solid #111;
+  border: 2px solid var(--tune-color, #111);
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 4px 12px rgba(17, 17, 17, 0.22);
+  background: transparent;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.24),
+    0 0 0 3px rgba(255, 255, 255, 0.24);
   cursor: grab;
   pointer-events: auto;
   touch-action: none;
