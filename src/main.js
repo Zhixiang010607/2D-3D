@@ -1,6 +1,6 @@
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const PREVIEW_MAX_SIZE = 1600;
-const OUTPUT_JPEG_QUALITY = 0.94;
+const OUTPUT_JPEG_QUALITY = 0.98;
 const RENDER_UI_UPDATE_INTERVAL = 6;
 const RENDER_YIELD_INTERVAL = 4;
 const DEFAULT_BADGE_RADIUS_PERCENT = 5.8;
@@ -1041,6 +1041,8 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "source-over";
   ctx.filter = "none";
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, size, size);
 
@@ -1174,6 +1176,8 @@ function drawBackgroundImage(ctx, image, size, fit) {
 }
 
 function drawImageFitted(ctx, image, x, y, w, h, fit) {
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   const scale = fit === "contain" ? Math.min(w / image.width, h / image.height) : Math.max(w / image.width, h / image.height);
   const iw = image.width * scale;
   const ih = image.height * scale;
