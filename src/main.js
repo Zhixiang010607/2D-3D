@@ -1,5 +1,8 @@
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const PREVIEW_MAX_SIZE = 1600;
+const OUTPUT_JPEG_QUALITY = 0.94;
+const RENDER_UI_UPDATE_INTERVAL = 6;
+const RENDER_YIELD_INTERVAL = 4;
 const DEFAULT_BADGE_RADIUS_PERCENT = 5.8;
 const BADGE_SIZE_MIN = 40;
 const BADGE_SIZE_MAX = 220;
@@ -476,25 +479,43 @@ async function renderAll() {
   updateUi("正在生成 3D 效果图...");
   const activeBackgrounds = getActiveBackgroundPresets();
   const total = state.files.length * activeBackgrounds.length;
+  const renderOptions = { ...state.options };
+  const renderCanvas = document.createElement("canvas");
   let done = 0;
 
-  for (const backgroundItem of activeBackgrounds) {
+  try {
     for (const file of state.files) {
-      const blob = await renderProduct(file, state.options, backgroundItem);
-      state.rendered.push({
-        file,
-        blob,
-        backgroundItem,
-        backgroundLabel: backgroundItem.name,
-        name: outputName(file, backgroundItem),
-        url: URL.createObjectURL(blob),
-      });
-      done += 1;
-      updateProgress(done, total);
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const source = await loadImage(file);
+      try {
+        for (const backgroundItem of activeBackgrounds) {
+          const blob = await renderProductFromSource(source, renderOptions, backgroundItem, renderCanvas);
+          const renderedItem = {
+            file,
+            blob,
+            backgroundItem,
+            backgroundLabel: backgroundItem.name,
+            name: outputName(file, backgroundItem),
+            url: URL.createObjectURL(blob),
+          };
+          state.rendered.push(renderedItem);
+          done += 1;
+          if (done === total || done % RENDER_UI_UPDATE_INTERVAL === 0) updateProgress(done, total);
+          if (done % RENDER_YIELD_INTERVAL === 0) await nextFrame();
+        }
+      } finally {
+        releaseDecodedImage(source);
+      }
     }
+  } catch (error) {
+    console.error(error);
+    releaseCanvas(renderCanvas);
+    state.processing = false;
+    updateUi("生成失败，请减少单次数量或输出尺寸后重试");
+    return;
   }
 
+  if (done) updateProgress(done, total);
+  releaseCanvas(renderCanvas);
   state.processing = false;
   state.selectedRenderedIndex = state.rendered.length ? 0 : -1;
   if (state.rendered[0]) paintPreview(state.rendered[0].url);
@@ -503,61 +524,68 @@ async function renderAll() {
 
 async function downloadZip() {
   if (!state.rendered.length) return;
+  state.processing = true;
   updateUi("正在打包 ZIP...");
-  const files = await Promise.all(
-    state.rendered.map(async (item) => ({
-      name: `3d-rendered-products/${item.name}`,
-      bytes: new Uint8Array(await item.blob.arrayBuffer()),
-    })),
-  );
-  const content = makeZip(files);
-  const url = URL.createObjectURL(content);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `3d-rendered-products-${new Date().toISOString().slice(0, 10)}.zip`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-  updateUi("ZIP 已生成");
+  try {
+    const content = await makeZipFromRendered(state.rendered, (done, total) => {
+      if (done === total || done % 20 === 0) {
+        document.querySelector("#statusTitle").textContent = `正在打包 ZIP ${done} / ${total}`;
+      }
+    });
+    const url = URL.createObjectURL(content);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `3d-rendered-products-${new Date().toISOString().slice(0, 10)}.zip`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    state.processing = false;
+    updateUi("ZIP 已生成");
+  } catch (error) {
+    console.error(error);
+    state.processing = false;
+    updateUi("ZIP 打包失败，请减少单次数量后重试");
+  }
 }
 
-function makeZip(files) {
+async function makeZipFromRendered(items, onProgress = () => {}) {
   const encoder = new TextEncoder();
   const parts = [];
   const central = [];
   let offset = 0;
 
-  files.forEach((file) => {
-    const nameBytes = encoder.encode(file.name);
-    const crc = crc32(file.bytes);
-    const local = concatBytes(
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const bytes = new Uint8Array(await item.blob.arrayBuffer());
+    const nameBytes = encoder.encode(`3d-rendered-products/${item.name}`);
+    const crc = crc32(bytes);
+    const localHeader = concatBytes(
       u32(0x04034b50),
       u16(20),
-      u16(0),
+      u16(0x0800),
       u16(0),
       u16(0),
       u16(0),
       u32(crc),
-      u32(file.bytes.length),
-      u32(file.bytes.length),
+      u32(bytes.length),
+      u32(bytes.length),
       u16(nameBytes.length),
       u16(0),
       nameBytes,
-      file.bytes,
     );
-    parts.push(local);
+    parts.push(localHeader, bytes);
 
     central.push(
       concatBytes(
         u32(0x02014b50),
         u16(20),
         u16(20),
-        u16(0),
+        u16(0x0800),
         u16(0),
         u16(0),
         u16(0),
         u32(crc),
-        u32(file.bytes.length),
-        u32(file.bytes.length),
+        u32(bytes.length),
+        u32(bytes.length),
         u16(nameBytes.length),
         u16(0),
         u16(0),
@@ -568,16 +596,18 @@ function makeZip(files) {
         nameBytes,
       ),
     );
-    offset += local.length;
-  });
+    offset += localHeader.length + bytes.length;
+    onProgress(index + 1, items.length);
+    if ((index + 1) % 20 === 0) await nextFrame();
+  }
 
   const centralSize = central.reduce((sum, part) => sum + part.length, 0);
   const end = concatBytes(
     u32(0x06054b50),
     u16(0),
     u16(0),
-    u16(files.length),
-    u16(files.length),
+    u16(items.length),
+    u16(items.length),
     u32(centralSize),
     u32(offset),
     u16(0),
@@ -995,11 +1025,24 @@ function paintBadgeMarkerCanvases(root = document) {
 
 async function renderProduct(file, options, backgroundItem) {
   const source = await loadImage(file);
-  const canvas = document.createElement("canvas");
+  try {
+    return await renderProductFromSource(source, options, backgroundItem);
+  } finally {
+    releaseDecodedImage(source);
+  }
+}
+
+async function renderProductFromSource(source, options, backgroundItem, canvas = document.createElement("canvas")) {
   const size = options.size;
-  const ctx = canvas.getContext("2d");
-  canvas.width = size;
-  canvas.height = size;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (canvas.width !== size) canvas.width = size;
+  if (canvas.height !== size) canvas.height = size;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.filter = "none";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, size, size);
 
   drawBackground(ctx, size, backgroundItem);
 
@@ -1075,7 +1118,7 @@ async function renderProduct(file, options, backgroundItem) {
 
   if (options.badge) drawBadge(ctx, size, options.badgeX, options.badgeY, options.badgeSize);
 
-  return await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.98));
+  return await canvasToJpegBlob(canvas);
 }
 
 function drawBackground(ctx, size, backgroundItem) {
@@ -1809,7 +1852,40 @@ function drawBadgeShape(ctx, x, y, r, size) {
   ctx.restore();
 }
 
-function loadImage(file) {
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function canvasToJpegBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Canvas 导出 JPEG 失败"));
+      },
+      "image/jpeg",
+      OUTPUT_JPEG_QUALITY,
+    );
+  });
+}
+
+function releaseDecodedImage(image) {
+  if (image && typeof image.close === "function") image.close();
+}
+
+function releaseCanvas(canvas) {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
+async function loadImage(file) {
+  if ("createImageBitmap" in window) {
+    try {
+      return await createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch (error) {
+      // Fall back to HTMLImageElement for formats or browsers that reject ImageBitmap.
+    }
+  }
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const image = new window.Image();
@@ -1938,6 +2014,7 @@ function paintBackgroundLibrary() {
     row.querySelector(".remove-background").addEventListener("click", () => {
       if (item.url) URL.revokeObjectURL(item.url);
       const wasFocused = state.activeBackgroundId === id;
+      releaseDecodedImage(item.image);
       state.userBackgrounds = state.userBackgrounds.filter((background) => background.id !== id);
       if (wasFocused) state.activeBackgroundId = state.userBackgrounds[0]?.id || null;
       clearRendered();
@@ -2245,7 +2322,7 @@ function paintFileList(doneCount) {
         const active = index === state.selectedRenderedIndex;
         return `
           <button class="file-row file-row--button ${active ? "file-row--active" : ""}" data-rendered-index="${index}">
-            <img src="${item.url}" alt="${item.name}" />
+            <img src="${item.url}" alt="${item.name}" loading="lazy" decoding="async" />
             <span title="${item.name}">${item.backgroundLabel}｜${item.file.name}</span>
           </button>
         `;
