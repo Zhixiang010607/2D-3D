@@ -491,7 +491,7 @@ async function handleBackgroundFiles(event) {
       url: URL.createObjectURL(file),
       name: file.name.replace(/\.[^.]+$/, ""),
       selected: true,
-      layoutMode: "gallery",
+      layoutMode: "frontGallery",
       freeLayout: createDefaultPlacement(getSelectedProductShape() || "circle"),
     });
     if (!state.activeBackgroundId) state.activeBackgroundId = id;
@@ -738,8 +738,8 @@ function setFocusedBackground(id) {
 }
 
 function getBackgroundLayoutMode(backgroundItem) {
-  const modes = new Set(["gallery", "hero", "duo", "triptych", "catalog", "floating", "free"]);
-  return modes.has(backgroundItem?.layoutMode) ? backgroundItem.layoutMode : "gallery";
+  const modes = new Set(["frontGallery", "frontDuo", "frontGrid", "gallery", "hero", "duo", "triptych", "catalog", "floating", "free"]);
+  return modes.has(backgroundItem?.layoutMode) ? backgroundItem.layoutMode : "frontGallery";
 }
 
 function getSelectedProductShape() {
@@ -999,6 +999,28 @@ function placementRotationRad(layout) {
 }
 
 function getLayoutPlaceholderViews(layoutMode) {
+  if (layoutMode === "frontGallery") {
+    return [
+      { cx: 0.40, cy: 0.52, r: 0.305, x: 1, y: 1, rot: 0 },
+      { cx: 0.76, cy: 0.30, r: 0.135, x: 1, y: 1, rot: 0 },
+      { cx: 0.80, cy: 0.53, r: 0.145, x: 1, y: 1, rot: 0 },
+      { cx: 0.73, cy: 0.75, r: 0.12, x: 1, y: 1, rot: 0 },
+    ];
+  }
+  if (layoutMode === "frontDuo") {
+    return [
+      { cx: 0.36, cy: 0.52, r: 0.30, x: 1, y: 1, rot: 0 },
+      { cx: 0.68, cy: 0.52, r: 0.22, x: 1, y: 1, rot: 0 },
+    ];
+  }
+  if (layoutMode === "frontGrid") {
+    return [
+      { cx: 0.33, cy: 0.34, r: 0.18, x: 1, y: 1, rot: 0 },
+      { cx: 0.67, cy: 0.34, r: 0.18, x: 1, y: 1, rot: 0 },
+      { cx: 0.33, cy: 0.68, r: 0.18, x: 1, y: 1, rot: 0 },
+      { cx: 0.67, cy: 0.68, r: 0.18, x: 1, y: 1, rot: 0 },
+    ];
+  }
   if (layoutMode === "gallery") {
     return [
       { cx: 0.4, cy: 0.52, r: 0.305, x: 1, y: 1, rot: -0.035 },
@@ -1203,6 +1225,26 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
     }
   } else if (productScale <= 0) {
     // A fixed overall scale of 0 means render only the background and optional label.
+  } else if (layoutMode === "frontGallery") {
+    drawStudioFloor(ctx, size, backgroundItem);
+    drawBadgeView(ctx, source, size, { cx: 0.40, cy: 0.52, r: 0.305, depth: 1.16, x: 1, y: 1, yaw: 0, rot: 0, primary: true }, depth, shadow, shine, options.material, productScale, renderShapeModel);
+    [
+      { cx: 0.76, cy: 0.30, r: 0.135 },
+      { cx: 0.80, cy: 0.53, r: 0.145 },
+      { cx: 0.73, cy: 0.75, r: 0.12 },
+    ].forEach((view) => drawBadgeView(ctx, source, size, { ...view, depth: 0.72, x: 1, y: 1, yaw: 0, rot: 0, primary: false }, depth, shadow * 0.9, shine * 0.92, options.material, productScale, renderShapeModel));
+  } else if (layoutMode === "frontDuo") {
+    drawStudioFloor(ctx, size, backgroundItem);
+    drawBadgeView(ctx, source, size, { cx: 0.36, cy: 0.52, r: 0.30, depth: 1.14, x: 1, y: 1, yaw: 0, rot: 0, primary: true }, depth, shadow, shine, options.material, productScale, renderShapeModel);
+    drawBadgeView(ctx, source, size, { cx: 0.68, cy: 0.52, r: 0.22, depth: 0.9, x: 1, y: 1, yaw: 0, rot: 0, primary: false }, depth, shadow * 0.86, shine * 0.92, options.material, productScale, renderShapeModel);
+  } else if (layoutMode === "frontGrid") {
+    drawStudioFloor(ctx, size, backgroundItem);
+    [
+      { cx: 0.33, cy: 0.34, r: 0.18, primary: true },
+      { cx: 0.67, cy: 0.34, r: 0.18, primary: false },
+      { cx: 0.33, cy: 0.68, r: 0.18, primary: false },
+      { cx: 0.67, cy: 0.68, r: 0.18, primary: true },
+    ].forEach((view) => drawBadgeView(ctx, source, size, { ...view, depth: 0.82, x: 1, y: 1, yaw: 0, rot: 0 }, depth, shadow * 0.82, shine * 0.92, options.material, productScale, renderShapeModel));
   } else if (layoutMode === "gallery") {
     drawStudioFloor(ctx, size, backgroundItem);
     drawBadgeView(ctx, source, size, { cx: 0.40, cy: 0.52, r: 0.305, depth: 1.16, x: 1, y: 1, yaw: 0, rot: -0.035, primary: true }, depth, shadow, shine, options.material, productScale, renderShapeModel);
@@ -1610,6 +1652,10 @@ function productBounds(view, inset = 0) {
   };
 }
 
+function isRoundProductShape(view) {
+  return view.shape === "circle" || view.shape === "ellipse";
+}
+
 function traceProductShape(ctx, view, inset = 0) {
   const { rx, ry } = productBounds(view, inset);
   if (rx <= 0 || ry <= 0) return;
@@ -1670,7 +1716,7 @@ function drawSpecularEdge(ctx, view) {
     ctx.lineWidth = Math.max(1.5, radius * 0.01);
     let bounds = productBounds(view, ctx.lineWidth * 0.9);
     ctx.beginPath();
-    if (view.shape === "circle" || view.shape === "ellipse") {
+    if (isRoundProductShape(view)) {
       ctx.ellipse(0, 0, bounds.rx, bounds.ry, 0, Math.PI * 1.12, Math.PI * 1.55);
     } else {
       traceProductShape(ctx, view, ctx.lineWidth * 0.9);
@@ -1680,7 +1726,7 @@ function drawSpecularEdge(ctx, view) {
     ctx.strokeStyle = "rgba(0,0,0,0.18)";
     bounds = productBounds(view, ctx.lineWidth);
     ctx.beginPath();
-    if (view.shape === "circle" || view.shape === "ellipse") {
+    if (isRoundProductShape(view)) {
       ctx.ellipse(0, 0, bounds.rx, bounds.ry, 0, Math.PI * 0.16, Math.PI * 0.48);
     } else {
       traceProductShape(ctx, view, ctx.lineWidth);
@@ -1779,7 +1825,7 @@ function drawExtrudedEdge(ctx, view) {
       ctx.strokeStyle = "rgba(255,255,255,0.86)";
       ctx.lineWidth = Math.max(1.5, radius * 0.008);
       ctx.beginPath();
-      if (view.shape === "circle" || view.shape === "ellipse") {
+      if (isRoundProductShape(view)) {
         const bounds = productBounds(view, ctx.lineWidth);
         ctx.ellipse(0, 0, bounds.rx, bounds.ry, 0, Math.PI * 1.05, Math.PI * 1.62);
       } else {
@@ -1799,6 +1845,9 @@ function drawFace(ctx, image, view) {
     ctx.beginPath();
     traceProductShape(ctx, view);
     ctx.clip();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
 
     const scale = Math.max((rx * 2.04) / image.width, (ry * 2.04) / image.height);
     const w = image.width * scale;
@@ -1823,18 +1872,40 @@ function drawMaterialFinish(ctx, view) {
   withProductTransform(ctx, view, () => {
     ctx.save();
     const { rx, ry } = productBounds(view);
+    const roundedShape = isRoundProductShape(view);
     ctx.beginPath();
     traceProductShape(ctx, view);
     ctx.clip();
 
     if (material === "acrylic") {
-      const dome = ctx.createRadialGradient(-radius * 0.28, -radius * 0.46, radius * 0.08, 0, 0, radius);
-      dome.addColorStop(0, `rgba(255,255,255,${0.1 + shine * 0.1})`);
-      dome.addColorStop(0.38, `rgba(255,255,255,${0.025 + shine * 0.035})`);
-      dome.addColorStop(0.72, "rgba(255,255,255,0)");
-      dome.addColorStop(1, "rgba(0,0,0,0.055)");
-      ctx.fillStyle = dome;
-      ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
+      if (roundedShape) {
+        const dome = ctx.createRadialGradient(-radius * 0.28, -radius * 0.46, radius * 0.08, 0, 0, radius);
+        dome.addColorStop(0, `rgba(255,255,255,${0.1 + shine * 0.1})`);
+        dome.addColorStop(0.38, `rgba(255,255,255,${0.025 + shine * 0.035})`);
+        dome.addColorStop(0.72, "rgba(255,255,255,0)");
+        dome.addColorStop(1, "rgba(0,0,0,0.055)");
+        ctx.fillStyle = dome;
+        ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
+      } else {
+        const surface = ctx.createLinearGradient(-rx, -ry, rx, ry);
+        surface.addColorStop(0, `rgba(255,255,255,${0.12 + shine * 0.08})`);
+        surface.addColorStop(0.34, `rgba(255,255,255,${0.035 + shine * 0.03})`);
+        surface.addColorStop(0.72, "rgba(255,255,255,0)");
+        surface.addColorStop(1, "rgba(0,0,0,0.06)");
+        ctx.fillStyle = surface;
+        ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
+
+        ctx.globalAlpha = Math.min(0.18, 0.05 + shine * 0.16);
+        ctx.fillStyle = "rgba(255,255,255,0.72)";
+        ctx.beginPath();
+        ctx.moveTo(-rx * 0.92, -ry * 0.54);
+        ctx.lineTo(-rx * 0.68, -ry * 0.84);
+        ctx.lineTo(rx * 0.94, ry * 0.16);
+        ctx.lineTo(rx * 0.72, ry * 0.44);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
 
       const lowerShade = ctx.createLinearGradient(0, -ry, 0, ry);
       lowerShade.addColorStop(0, "rgba(255,255,255,0)");
@@ -1843,7 +1914,7 @@ function drawMaterialFinish(ctx, view) {
       ctx.fillStyle = lowerShade;
       ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
 
-      if (shine > 0.62) {
+      if (roundedShape && shine > 0.62) {
         ctx.globalAlpha = Math.min(0.22, (shine - 0.58) * 0.62);
         ctx.fillStyle = "rgba(255,255,255,0.68)";
         ctx.beginPath();
@@ -1875,17 +1946,26 @@ function drawPinRim(ctx, view) {
   const { radius, material } = view;
   withProductTransform(ctx, view, () => {
     ctx.save();
+    const { rx, ry } = productBounds(view);
+    const roundedShape = isRoundProductShape(view);
     ctx.lineWidth = Math.max(5, radius * 0.045);
     ctx.strokeStyle = "rgba(255,255,255,0.22)";
     ctx.beginPath();
     traceProductShape(ctx, view, -ctx.lineWidth * 0.12);
     ctx.stroke();
 
-    const rim = ctx.createRadialGradient(-radius * 0.34, -radius * 0.44, radius * 0.2, 0, 0, radius);
-    rim.addColorStop(0, "rgba(255,255,255,0.12)");
-    rim.addColorStop(0.74, "rgba(255,255,255,0)");
-    rim.addColorStop(0.9, material === "metal" ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.055)");
-    rim.addColorStop(1, "rgba(0,0,0,0.14)");
+    const rim = roundedShape ? ctx.createRadialGradient(-radius * 0.34, -radius * 0.44, radius * 0.2, 0, 0, radius) : ctx.createLinearGradient(-rx, -ry, rx, ry);
+    if (roundedShape) {
+      rim.addColorStop(0, "rgba(255,255,255,0.12)");
+      rim.addColorStop(0.74, "rgba(255,255,255,0)");
+      rim.addColorStop(0.9, material === "metal" ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.055)");
+      rim.addColorStop(1, "rgba(0,0,0,0.14)");
+    } else {
+      rim.addColorStop(0, "rgba(255,255,255,0.10)");
+      rim.addColorStop(0.36, "rgba(255,255,255,0.02)");
+      rim.addColorStop(0.74, "rgba(0,0,0,0.025)");
+      rim.addColorStop(1, "rgba(0,0,0,0.13)");
+    }
     ctx.fillStyle = rim;
     ctx.beginPath();
     traceProductShape(ctx, view);
@@ -1906,7 +1986,7 @@ function drawPinRim(ctx, view) {
     ctx.lineWidth = Math.max(2, radius * 0.01);
     ctx.strokeStyle = "rgba(255,255,255,0.38)";
     ctx.beginPath();
-    if (view.shape === "circle" || view.shape === "ellipse") {
+    if (isRoundProductShape(view)) {
       const bounds = productBounds(view, ctx.lineWidth * 1.4);
       ctx.ellipse(0, 0, bounds.rx, bounds.ry, 0, Math.PI * 1.05, Math.PI * 1.68);
     } else {
@@ -2092,12 +2172,15 @@ function paintBackgroundLibrary() {
           <button class="remove-background" title="删除背景" type="button" ${locked ? "disabled" : ""}>×</button>
           <div class="background-layout">
             <select class="background-layout-mode" aria-label="Background ${index + 1} layout mode" ${locked ? "disabled" : ""}>
-              <option value="gallery" ${layoutMode === "gallery" ? "selected" : ""}>固定：主图 + 多角度小图</option>
+              <option value="frontGallery" ${layoutMode === "frontGallery" ? "selected" : ""}>固定：正面主图 + 正面小图</option>
+              <option value="frontDuo" ${layoutMode === "frontDuo" ? "selected" : ""}>固定：正面双图陈列</option>
+              <option value="frontGrid" ${layoutMode === "frontGrid" ? "selected" : ""}>固定：正面四宫格</option>
+              <option value="gallery" ${layoutMode === "gallery" ? "selected" : ""}>透视：主图 + 多角度小图</option>
               <option value="hero" ${layoutMode === "hero" ? "selected" : ""}>固定：单张高级主图</option>
-              <option value="duo" ${layoutMode === "duo" ? "selected" : ""}>固定：主图 + 侧角特写</option>
-              <option value="triptych" ${layoutMode === "triptych" ? "selected" : ""}>固定：三联商品陈列</option>
-              <option value="catalog" ${layoutMode === "catalog" ? "selected" : ""}>固定：电商目录排版</option>
-              <option value="floating" ${layoutMode === "floating" ? "selected" : ""}>固定：漂浮斜角组合</option>
+              <option value="duo" ${layoutMode === "duo" ? "selected" : ""}>透视：主图 + 侧角特写</option>
+              <option value="triptych" ${layoutMode === "triptych" ? "selected" : ""}>透视：三联商品陈列</option>
+              <option value="catalog" ${layoutMode === "catalog" ? "selected" : ""}>透视：电商目录排版</option>
+              <option value="floating" ${layoutMode === "floating" ? "selected" : ""}>透视：漂浮斜角组合</option>
               <option value="free" ${layoutMode === "free" ? "selected" : ""}>拖动图形占位</option>
             </select>
             <p class="background-placement-note">${
