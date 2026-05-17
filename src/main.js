@@ -480,9 +480,9 @@ function revokeProductFileUrls() {
 }
 
 async function handleBackgroundFiles(event) {
-  if (isWaitingForProductShape()) {
+  if (!hasProductFiles() || isWaitingForProductShape()) {
     event.target.value = "";
-    updateUi("请先选择图片形状");
+    updateUi(hasProductFiles() ? "请先选择图片形状" : "请先上传产品图片");
     renderPreview();
     return;
   }
@@ -774,8 +774,12 @@ function hasSelectedProductShape() {
   return Boolean(getSelectedProductShape());
 }
 
+function hasProductFiles() {
+  return state.fileItems.length > 0;
+}
+
 function isWaitingForProductShape() {
-  return state.fileItems.length > 0 && !hasSelectedProductShape();
+  return hasProductFiles() && !hasSelectedProductShape();
 }
 
 function applyProductShapeToLayouts(shape) {
@@ -2793,22 +2797,28 @@ function updateProgress(done, total) {
 }
 
 function updateUi(status) {
-  const hasFiles = state.files.length > 0;
+  const hasFiles = hasProductFiles();
   const selectedCount = getSelectedProductItems().length;
   const hasShape = hasSelectedProductShape();
   const waitingForShape = hasFiles && !hasShape;
-  const controlsLocked = waitingForShape || state.processing;
+  const productUploadLocked = state.processing;
+  const controlsLocked = !hasFiles || waitingForShape || state.processing;
   const total = selectedCount * getActiveBackgroundPresets().length;
   document.querySelector("#renderBtn").disabled = !selectedCount || !hasShape || !getActiveBackgroundPresets().length || controlsLocked;
   document.querySelector("#clearRenderedBtn").disabled = !state.rendered.length || controlsLocked;
   document.querySelector("#downloadBtn").disabled = !state.rendered.length || controlsLocked;
-  ["productInput", "folderInput", "backgroundUpload", "backgroundFolderUpload", "size", "depth", "badge", "badgeSize"].forEach((id) => {
+  ["productInput", "folderInput"].forEach((id) => {
+    const control = document.querySelector(`#${id}`);
+    if (control) control.disabled = productUploadLocked;
+  });
+  ["backgroundUpload", "backgroundFolderUpload", "size", "depth", "badge", "badgeSize"].forEach((id) => {
     const control = document.querySelector(`#${id}`);
     if (control) control.disabled = controlsLocked;
   });
-  document.querySelector("#productUploadField")?.classList.toggle("field--disabled", controlsLocked);
+  document.querySelector("#productUploadField")?.classList.toggle("field--disabled", productUploadLocked);
   document.querySelector("#backgroundUploadField")?.classList.toggle("field--disabled", controlsLocked);
   document.querySelector(".render-controls--left")?.classList.toggle("field--disabled", controlsLocked);
+  document.querySelector(".render-actions-left")?.classList.toggle("field--disabled", controlsLocked);
   document.querySelector("#statusTitle").textContent =
     status || (hasFiles ? (hasShape ? (selectedCount ? "已上传图片，可以生成" : "请至少勾选一张上传图片") : "已上传图片，请先选择图片形状") : "等待上传图片");
   document.querySelector("#countPill").textContent = `${total} 张成品`;
@@ -2826,9 +2836,9 @@ function updateUi(status) {
 function paintBackgroundLibrary() {
   const library = document.querySelector("#backgroundLibrary");
   if (!library) return;
-  const locked = isWaitingForProductShape() || state.processing;
+  const locked = !hasProductFiles() || isWaitingForProductShape() || state.processing;
   if (!state.userBackgrounds.length) {
-    library.innerHTML = `<p class="muted">${isWaitingForProductShape() ? "请先选择图片形状，再上传或配置背景。" : "还没有上传背景。可以上传单张，也可以上传一个背景文件夹。"}</p>`;
+    library.innerHTML = `<p class="muted">${!hasProductFiles() ? "请先上传产品图片，再上传或配置背景。" : isWaitingForProductShape() ? "请先选择图片形状，再上传或配置背景。" : "还没有上传背景。可以上传单张，也可以上传一个背景文件夹。"}</p>`;
     return;
   }
 
@@ -2937,11 +2947,11 @@ function paintProductFileList() {
   if (!list || !count || !selectAllButton || !deselectAllButton || !clearButton) return;
 
   const selectedCount = getSelectedProductItems().length;
-  const locked = isWaitingForProductShape();
+  const locked = isWaitingForProductShape() || state.processing;
   count.textContent = `${selectedCount} / ${state.fileItems.length}`;
-  selectAllButton.disabled = !state.fileItems.length || state.processing || locked;
-  deselectAllButton.disabled = !state.fileItems.length || state.processing || locked;
-  clearButton.disabled = !state.fileItems.length || state.processing || locked;
+  selectAllButton.disabled = !state.fileItems.length || locked;
+  deselectAllButton.disabled = !state.fileItems.length || locked;
+  clearButton.disabled = !state.fileItems.length || locked;
   selectAllButton.textContent = selectedCount === state.fileItems.length && state.fileItems.length ? "已全选" : "全选";
   deselectAllButton.textContent = selectedCount === 0 && state.fileItems.length ? "已全不选" : "全部不勾选";
 
@@ -2955,11 +2965,11 @@ function paintProductFileList() {
       (item) => `
         <div class="product-file-row ${item.selected ? "product-file-row--selected" : ""} ${locked ? "product-file-row--disabled" : ""}">
           <label class="product-file-pick">
-            <input type="checkbox" data-product-file-id="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} ${state.processing || locked ? "disabled" : ""} />
+            <input type="checkbox" data-product-file-id="${escapeHtml(item.id)}" ${item.selected ? "checked" : ""} ${locked ? "disabled" : ""} />
             <img src="${item.url}" alt="${escapeHtml(item.file.name)}" loading="lazy" decoding="async" />
             <span title="${escapeHtml(item.file.webkitRelativePath || item.file.name)}">${escapeHtml(item.file.name)}</span>
           </label>
-          <button class="product-file-remove" type="button" data-product-file-remove-id="${escapeHtml(item.id)}" ${state.processing || locked ? "disabled" : ""} title="删除这张图片" aria-label="删除 ${escapeHtml(item.file.name)}">×</button>
+          <button class="product-file-remove" type="button" data-product-file-remove-id="${escapeHtml(item.id)}" ${locked ? "disabled" : ""} title="删除这张图片" aria-label="删除 ${escapeHtml(item.file.name)}">×</button>
         </div>
       `,
     )
