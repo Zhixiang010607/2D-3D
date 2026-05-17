@@ -1118,11 +1118,14 @@ function placementRotationRad(layout) {
 }
 
 function normalizeTuneLineColor(value) {
+  if (value === "red" || value === "#f04438" || value === "#ff0000") return "red";
   return value === "white" || value === "#fff" || value === "#ffffff" ? "white" : "black";
 }
 
 function placementTuneLineColor(layout) {
-  return normalizeTuneLineColor(layout?.tuneLineColor) === "white" ? "#ffffff" : "#111111";
+  const color = normalizeTuneLineColor(layout?.tuneLineColor);
+  if (color === "red") return "#f04438";
+  return color === "white" ? "#ffffff" : "#111111";
 }
 
 function placementQuadSvgPoints(layout, dimensions) {
@@ -3102,6 +3105,7 @@ function paintPlacementStage(backgroundItem) {
           <select id="placementTuneLineColor" class="number-control">
             <option value="black" ${layout.tuneLineColor === "black" ? "selected" : ""}>黑色</option>
             <option value="white" ${layout.tuneLineColor === "white" ? "selected" : ""}>白色</option>
+            <option value="red" ${layout.tuneLineColor === "red" ? "selected" : ""}>红色</option>
           </select>
         </label>
       </div>
