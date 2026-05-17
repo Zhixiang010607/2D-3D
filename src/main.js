@@ -205,7 +205,6 @@ app.innerHTML = `
             <option value="polygon">正多边形</option>
             <option value="rectangle">矩形</option>
           </select>
-          <p class="field-hint">上传产品图片后必须设置，所有背景都会使用同一种占位形状。</p>
         </div>
 
         <div id="backgroundUploadField" class="field">
@@ -234,7 +233,6 @@ app.innerHTML = `
           <div class="field">
             <label for="size">输出尺寸 <b id="sizeValue">3600</b> × <b id="sizeValueY">3600</b> px</label>
             <input id="size" type="range" min="800" max="8000" step="200" value="3600" />
-            <p class="field-hint">批量建议 2400-3600；超清可到 8000，生成会明显变慢。</p>
           </div>
 
           <div class="field">
@@ -248,7 +246,7 @@ app.innerHTML = `
           </label>
 
           <div class="field">
-            <label for="badgeSize">2D FLAT 标识大小 <b id="badgeSizeValue">100</b>%</label>
+            <label for="badgeSize">标识大小 <b id="badgeSizeValue">100</b>%</label>
             <input id="badgeSize" type="range" min="40" max="220" step="5" value="100" />
           </div>
         </div>
