@@ -10,14 +10,10 @@ const BADGE_SIZE_MAX = 220;
 const BADGE_OUTER_SCALE = 1.18;
 const BADGE_SHADOW_BLUR_PERCENT = 1.8;
 const BADGE_SHADOW_OFFSET_PERCENT = 0.8;
-const AUTH_STORAGE_KEY = "yyj-renderer-employees-v1";
 const AUTH_SESSION_KEY = "yyj-renderer-session-v1";
 const AUTH_REMEMBER_KEY = "yyj-renderer-remember-login-v1";
-const ADMIN_ACCOUNT = {
-  username: "yanyujie123",
-  password: "123456789",
-  role: "admin",
-};
+const AUTH_API_BASE_URL = (window.YYJ_AUTH_API_URL || document.querySelector("meta[name='auth-api-base']")?.content || "").replace(/\/$/, "");
+const ADMIN_USERNAME = "yanyujie123";
 const state = {
   files: [],
   fileItems: [],
@@ -364,9 +360,8 @@ const appTemplate = `
   </main>
 `;
 
-function bootstrap() {
-  ensureEmployeeStore();
-  currentUser = readSessionUser();
+async function bootstrap() {
+  currentUser = await readSessionUser();
   if (currentUser) {
     renderAppShell();
     return;
@@ -415,34 +410,6 @@ function renderAppShell() {
   updateUi();
 }
 
-function ensureEmployeeStore() {
-  if (!window.localStorage.getItem(AUTH_STORAGE_KEY)) {
-    window.localStorage.setItem(AUTH_STORAGE_KEY, "[]");
-  }
-}
-
-function readEmployeeAccounts() {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(AUTH_STORAGE_KEY) || "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((account) => account && typeof account.username === "string" && typeof account.password === "string")
-      .map((account) => ({
-        id: account.id || createId("employee"),
-        username: account.username.trim(),
-        password: account.password,
-        createdAt: account.createdAt || new Date().toISOString(),
-      }))
-      .filter((account) => account.username);
-  } catch {
-    return [];
-  }
-}
-
-function saveEmployeeAccounts(accounts) {
-  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(accounts));
-}
-
 function readRememberedLogin() {
   try {
     const remembered = JSON.parse(window.localStorage.getItem(AUTH_REMEMBER_KEY) || "null");
@@ -465,60 +432,98 @@ function clearRememberedLogin() {
   window.localStorage.removeItem(AUTH_REMEMBER_KEY);
 }
 
-function readSessionUser() {
+async function readSessionUser() {
   try {
     const session = JSON.parse(window.sessionStorage.getItem(AUTH_SESSION_KEY) || "null");
-    if (!session) return null;
-    if (session.role === "admin" && session.username === ADMIN_ACCOUNT.username) {
-      return { role: "admin", username: ADMIN_ACCOUNT.username };
-    }
-    if (session.role === "employee") {
-      const account = readEmployeeAccounts().find((item) => item.id === session.id && item.password === session.password);
-      if (account) return { role: "employee", id: account.id, username: account.username, password: account.password };
-    }
+    if (!session?.token) return null;
+    const data = await authApiRequest("/api/auth/me", { auth: false, token: session.token });
+    return { ...data.user, token: session.token };
   } catch {
     window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+    return null;
   }
-  window.sessionStorage.removeItem(AUTH_SESSION_KEY);
-  return null;
 }
 
 function writeSessionUser(user) {
-  const payload =
-    user.role === "admin"
-      ? { role: "admin", username: user.username }
-      : { role: "employee", id: user.id, username: user.username, password: user.password };
-  window.sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(payload));
+  window.sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ token: user.token }));
 }
 
-function authenticate(username, password) {
-  if (username === ADMIN_ACCOUNT.username && password === ADMIN_ACCOUNT.password) {
-    return { role: "admin", username: ADMIN_ACCOUNT.username };
+async function authenticate(username, password) {
+  const data = await authApiRequest("/api/auth/login", {
+    auth: false,
+    method: "POST",
+    body: { username, password },
+  });
+  return { ...data.user, token: data.token };
+}
+
+function authApiUrl(path) {
+  return `${AUTH_API_BASE_URL}${path}`;
+}
+
+function readStoredToken() {
+  try {
+    return JSON.parse(window.sessionStorage.getItem(AUTH_SESSION_KEY) || "null")?.token || "";
+  } catch {
+    return "";
   }
-  const employee = readEmployeeAccounts().find((account) => account.username === username && account.password === password);
-  if (!employee) return null;
-  return { role: "employee", id: employee.id, username: employee.username, password: employee.password };
+}
+
+async function authApiRequest(path, options = {}) {
+  const headers = { Accept: "application/json", ...(options.headers || {}) };
+  const token = options.token || (options.auth === false ? "" : currentUser?.token || readStoredToken());
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const requestOptions = {
+    method: options.method || "GET",
+    headers,
+  };
+  if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    requestOptions.body = JSON.stringify(options.body);
+  }
+
+  let response;
+  try {
+    response = await fetch(authApiUrl(path), requestOptions);
+  } catch {
+    throw new Error("云端账号 API 连接失败，请检查 Worker 地址是否配置正确");
+  }
+
+  const text = await response.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error("云端账号 API 返回异常，请检查 Worker 是否部署成功");
+  }
+  if (!response.ok) throw new Error(data.error || "云端账号请求失败");
+  return data;
 }
 
 function bindLoginEvents() {
-  document.querySelector("#loginForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#loginForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const username = document.querySelector("#loginUsername").value.trim();
     const password = document.querySelector("#loginPassword").value;
     const rememberPassword = document.querySelector("#rememberPassword")?.checked;
-    const user = authenticate(username, password);
-    if (!user) {
-      document.querySelector("#authMessage").textContent = "账号或密码不正确";
-      return;
+    const button = event.currentTarget.querySelector("button[type='submit']");
+    const message = document.querySelector("#authMessage");
+    button.disabled = true;
+    message.textContent = "正在登录...";
+    try {
+      const user = await authenticate(username, password);
+      if (rememberPassword) {
+        saveRememberedLogin(username, password);
+      } else {
+        clearRememberedLogin();
+      }
+      currentUser = user;
+      writeSessionUser(user);
+      renderAppShell();
+    } catch (error) {
+      message.textContent = error.message || "账号或密码不正确";
+      button.disabled = false;
     }
-    if (rememberPassword) {
-      saveRememberedLogin(username, password);
-    } else {
-      clearRememberedLogin();
-    }
-    currentUser = user;
-    writeSessionUser(user);
-    renderAppShell();
   });
 }
 
@@ -542,7 +547,7 @@ function bindAuthEvents() {
     setEmployeeMessage("已随机生成账号和密码，可以直接新增或手动修改");
   });
 
-  document.querySelector("#employeeCreateForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#employeeCreateForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const usernameInput = document.querySelector("#employeeUsername");
     const passwordInput = document.querySelector("#employeePassword");
@@ -553,16 +558,18 @@ function bindAuthEvents() {
       setEmployeeMessage(validation);
       return;
     }
-    const accounts = readEmployeeAccounts();
-    if (accounts.some((account) => account.username === username)) {
-      setEmployeeMessage("这个员工账号已经存在");
-      return;
+    setEmployeeMessage("正在新增员工账号...");
+    try {
+      await authApiRequest("/api/employees", {
+        method: "POST",
+        body: { username, password },
+      });
+      usernameInput.value = "";
+      passwordInput.value = "";
+      await renderEmployeeAccountList("已新增员工账号");
+    } catch (error) {
+      setEmployeeMessage(error.message || "新增员工账号失败");
     }
-    accounts.push({ id: createId("employee"), username, password, createdAt: new Date().toISOString() });
-    saveEmployeeAccounts(accounts);
-    usernameInput.value = "";
-    passwordInput.value = "";
-    renderEmployeeAccountList("已新增员工账号");
   });
 
   document.querySelector("#employeeAccountList")?.addEventListener("click", (event) => {
@@ -573,11 +580,11 @@ function bindAuthEvents() {
     const id = row.dataset.employeeId;
     const action = button.dataset.employeeAction;
     if (action === "save") {
-      saveEmployeeAccountFromRow(row, id);
+      saveEmployeeAccountFromRow(row, id, button);
       return;
     }
     if (action === "delete") {
-      deleteEmployeeAccount(id);
+      deleteEmployeeAccount(id, button);
     }
   });
 }
@@ -590,14 +597,23 @@ function renderAccountUi() {
   renderEmployeeAccountList();
 }
 
-function renderEmployeeAccountList(message = "") {
+async function renderEmployeeAccountList(message = "") {
   const list = document.querySelector("#employeeAccountList");
   if (!list) return;
   if (currentUser?.role !== "admin") {
     list.innerHTML = "";
     return;
   }
-  const accounts = readEmployeeAccounts();
+  list.innerHTML = `<p class="muted">正在读取员工账号...</p>`;
+  let accounts = [];
+  try {
+    const data = await authApiRequest("/api/employees");
+    accounts = data.employees || [];
+  } catch (error) {
+    list.innerHTML = `<p class="muted">${escapeHtml(error.message || "无法读取员工账号")}</p>`;
+    setEmployeeMessage("无法读取员工账号");
+    return;
+  }
   if (!accounts.length) {
     list.innerHTML = `<p class="muted">还没有员工账号。可以手动输入，也可以点击随机生成。</p>`;
     setEmployeeMessage(message);
@@ -613,8 +629,8 @@ function renderEmployeeAccountList(message = "") {
             <input class="employee-row-username" type="text" value="${escapeHtml(account.username)}" autocomplete="off" />
           </label>
           <label>
-            密码
-            <input class="employee-row-password" type="text" value="${escapeHtml(account.password)}" autocomplete="off" />
+            新密码
+            <input class="employee-row-password" type="text" value="" autocomplete="off" placeholder="留空则不修改密码" />
           </label>
           <button class="secondary account-button" type="button" data-employee-action="save">保存</button>
           <button class="secondary account-button account-button--danger" type="button" data-employee-action="delete">删除</button>
@@ -625,41 +641,44 @@ function renderEmployeeAccountList(message = "") {
   setEmployeeMessage(message);
 }
 
-function saveEmployeeAccountFromRow(row, id) {
+async function saveEmployeeAccountFromRow(row, id, button) {
   const username = row.querySelector(".employee-row-username").value.trim();
   const password = row.querySelector(".employee-row-password").value.trim();
-  const validation = validateEmployeeAccount(username, password);
+  const validation = validateEmployeeAccount(username, password, { passwordRequired: false });
   if (validation) {
     setEmployeeMessage(validation);
     return;
   }
-  const accounts = readEmployeeAccounts();
-  const current = accounts.find((account) => account.id === id);
-  if (!current) {
-    renderEmployeeAccountList("这个员工账号已经不存在");
-    return;
+  button.disabled = true;
+  setEmployeeMessage("正在保存员工账号...");
+  try {
+    await authApiRequest(`/api/employees/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: password ? { username, password } : { username },
+    });
+    await renderEmployeeAccountList("员工账号已更新");
+  } catch (error) {
+    setEmployeeMessage(error.message || "员工账号更新失败");
+    button.disabled = false;
   }
-  if (accounts.some((account) => account.id !== id && account.username === username)) {
-    setEmployeeMessage("这个员工账号已经被其他员工使用");
-    return;
-  }
-  current.username = username;
-  current.password = password;
-  saveEmployeeAccounts(accounts);
-  renderEmployeeAccountList("员工账号已更新");
 }
 
-function deleteEmployeeAccount(id) {
-  const accounts = readEmployeeAccounts();
-  const nextAccounts = accounts.filter((account) => account.id !== id);
-  saveEmployeeAccounts(nextAccounts);
-  renderEmployeeAccountList(nextAccounts.length === accounts.length ? "这个员工账号已经不存在" : "员工账号已删除");
+async function deleteEmployeeAccount(id, button) {
+  button.disabled = true;
+  setEmployeeMessage("正在删除员工账号...");
+  try {
+    await authApiRequest(`/api/employees/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await renderEmployeeAccountList("员工账号已删除");
+  } catch (error) {
+    setEmployeeMessage(error.message || "员工账号删除失败");
+    button.disabled = false;
+  }
 }
 
-function validateEmployeeAccount(username, password) {
+function validateEmployeeAccount(username, password, options = { passwordRequired: true }) {
   if (!username) return "员工账号不能为空";
-  if (!password) return "员工密码不能为空";
-  if (username === ADMIN_ACCOUNT.username) return "员工账号不能和管理员账号相同";
+  if (options.passwordRequired && !password) return "员工密码不能为空";
+  if (username === ADMIN_USERNAME) return "员工账号不能和管理员账号相同";
   return "";
 }
 
@@ -680,10 +699,6 @@ function createSuggestedPassword() {
     password += chars[Math.floor(Math.random() * chars.length)];
   }
   return password;
-}
-
-function createId(prefix) {
-  return `${prefix}-${globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
 }
 
 function resetWorkspaceState() {
