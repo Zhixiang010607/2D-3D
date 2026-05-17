@@ -12,6 +12,7 @@ const BADGE_SHADOW_BLUR_PERCENT = 1.8;
 const BADGE_SHADOW_OFFSET_PERCENT = 0.8;
 const AUTH_STORAGE_KEY = "yyj-renderer-employees-v1";
 const AUTH_SESSION_KEY = "yyj-renderer-session-v1";
+const AUTH_REMEMBER_KEY = "yyj-renderer-remember-login-v1";
 const ADMIN_ACCOUNT = {
   username: "yanyujie123",
   password: "123456789",
@@ -375,6 +376,7 @@ function bootstrap() {
 
 function renderLoginScreen(message = "") {
   currentUser = null;
+  const rememberedLogin = readRememberedLogin();
   app.innerHTML = `
     <main class="auth-shell">
       <section class="auth-card">
@@ -384,11 +386,15 @@ function renderLoginScreen(message = "") {
         <form id="loginForm" class="auth-form">
           <label>
             账号
-            <input id="loginUsername" type="text" autocomplete="username" required />
+            <input id="loginUsername" type="text" autocomplete="username" value="${escapeHtml(rememberedLogin?.username || "")}" required />
           </label>
           <label>
             密码
-            <input id="loginPassword" type="password" autocomplete="current-password" required />
+            <input id="loginPassword" type="password" autocomplete="current-password" value="${escapeHtml(rememberedLogin?.password || "")}" required />
+          </label>
+          <label class="auth-remember">
+            <input id="rememberPassword" type="checkbox" ${rememberedLogin ? "checked" : ""} />
+            <span>记住密码</span>
           </label>
           <button class="primary auth-submit" type="submit">登录使用</button>
           <p id="authMessage" class="auth-message">${escapeHtml(message)}</p>
@@ -437,6 +443,28 @@ function saveEmployeeAccounts(accounts) {
   window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(accounts));
 }
 
+function readRememberedLogin() {
+  try {
+    const remembered = JSON.parse(window.localStorage.getItem(AUTH_REMEMBER_KEY) || "null");
+    if (!remembered || typeof remembered.username !== "string" || typeof remembered.password !== "string") return null;
+    return {
+      username: remembered.username,
+      password: remembered.password,
+    };
+  } catch {
+    window.localStorage.removeItem(AUTH_REMEMBER_KEY);
+    return null;
+  }
+}
+
+function saveRememberedLogin(username, password) {
+  window.localStorage.setItem(AUTH_REMEMBER_KEY, JSON.stringify({ username, password }));
+}
+
+function clearRememberedLogin() {
+  window.localStorage.removeItem(AUTH_REMEMBER_KEY);
+}
+
 function readSessionUser() {
   try {
     const session = JSON.parse(window.sessionStorage.getItem(AUTH_SESSION_KEY) || "null");
@@ -477,10 +505,16 @@ function bindLoginEvents() {
     event.preventDefault();
     const username = document.querySelector("#loginUsername").value.trim();
     const password = document.querySelector("#loginPassword").value;
+    const rememberPassword = document.querySelector("#rememberPassword")?.checked;
     const user = authenticate(username, password);
     if (!user) {
       document.querySelector("#authMessage").textContent = "账号或密码不正确";
       return;
+    }
+    if (rememberPassword) {
+      saveRememberedLogin(username, password);
+    } else {
+      clearRememberedLogin();
     }
     currentUser = user;
     writeSessionUser(user);

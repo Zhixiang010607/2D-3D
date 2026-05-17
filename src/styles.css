@@ -1113,6 +1113,23 @@ input[type="range"] {
   color: #1f2924;
 }
 
+.auth-remember {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px !important;
+  width: fit-content;
+  cursor: pointer;
+}
+
+.auth-remember input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
 .auth-submit {
   min-height: 46px;
   border: 0;
