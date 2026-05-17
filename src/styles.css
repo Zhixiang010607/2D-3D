@@ -192,6 +192,23 @@ h2 {
   margin-bottom: 16px;
 }
 
+.render-actions-left {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #dfe3de;
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.render-actions-left .panel__title {
+  margin-bottom: 4px;
+}
+
+.action-button {
+  width: 100%;
+  min-height: 44px;
+}
+
 .field {
   display: grid;
   gap: 10px;
@@ -638,16 +655,6 @@ input[type="range"] {
   background: var(--stage-bg);
 }
 
-.preview-actions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 200px));
-  justify-content: center;
-  gap: 12px;
-  border-top: 1px solid #dfe3de;
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.82);
-}
-
 .stage--placement {
   align-content: center;
 }
@@ -1088,14 +1095,9 @@ input[type="range"] {
     padding-top: 16px;
   }
 
-  .preview-actions,
   .primary,
   .secondary {
     width: 100%;
-  }
-
-  .preview-actions {
-    grid-template-columns: 1fr;
   }
 
   .preview__toolbar {

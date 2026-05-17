@@ -253,6 +253,25 @@ app.innerHTML = `
           </div>
         </div>
 
+        <div class="render-actions-left">
+          <div class="panel__title">
+            <span data-icon="sparkles"></span>
+            <h2>生成操作</h2>
+          </div>
+          <button id="renderBtn" class="primary action-button" disabled>
+            <span data-icon="sparkles"></span>
+            生成 3D 效果
+          </button>
+          <button id="clearRenderedBtn" class="primary action-button" disabled>
+            <span data-icon="refresh"></span>
+            清空 3D 效果
+          </button>
+          <button id="downloadBtn" class="primary action-button" disabled>
+            <span data-icon="download"></span>
+            下载 ZIP
+          </button>
+        </div>
+
       </aside>
 
       <section class="preview">
@@ -268,20 +287,6 @@ app.innerHTML = `
             <span data-icon="image"></span>
             <p>上传 2D 图片后，这里会显示第一张转换预览。</p>
           </div>
-        </div>
-        <div class="preview-actions">
-          <button id="renderBtn" class="secondary" disabled>
-            <span data-icon="sparkles"></span>
-            生成 3D 效果
-          </button>
-          <button id="clearRenderedBtn" class="secondary" disabled>
-            <span data-icon="refresh"></span>
-            清空 3D 效果
-          </button>
-          <button id="downloadBtn" class="secondary" disabled>
-            <span data-icon="download"></span>
-            下载 ZIP
-          </button>
         </div>
       </section>
 
