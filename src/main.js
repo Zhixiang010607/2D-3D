@@ -2901,8 +2901,14 @@ function paintBackgroundLibrary() {
       if (locked) return;
       setFocusedBackground(id);
       item.layoutMode = event.target.value;
+      if (item.layoutMode === "free") {
+        state.options.depth = 0;
+        const depthInput = document.querySelector("#depth");
+        if (depthInput) depthInput.value = "0";
+        syncOptionLabels();
+      }
       clearRendered();
-      updateUi("背景排版方式已更新，可以重新生成");
+      updateUi(item.layoutMode === "free" ? "已切换为拖动图形占位，边缘厚度已先设为 0" : "背景排版方式已更新，可以重新生成");
       renderPreview();
     });
     row.querySelector(".remove-background").addEventListener("click", () => {
