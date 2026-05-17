@@ -10,6 +10,13 @@ const BADGE_SIZE_MAX = 220;
 const BADGE_OUTER_SCALE = 1.18;
 const BADGE_SHADOW_BLUR_PERCENT = 1.8;
 const BADGE_SHADOW_OFFSET_PERCENT = 0.8;
+const AUTH_STORAGE_KEY = "yyj-renderer-employees-v1";
+const AUTH_SESSION_KEY = "yyj-renderer-session-v1";
+const ADMIN_ACCOUNT = {
+  username: "yanyujie123",
+  password: "123456789",
+  role: "admin",
+};
 const state = {
   files: [],
   fileItems: [],
@@ -36,6 +43,8 @@ const state = {
     badgeSize: 100,
   },
 };
+
+let currentUser = null;
 
 const imageContentRectCache = new WeakMap();
 
@@ -159,7 +168,7 @@ const downloadedBackgrounds = {
 
 const app = document.querySelector("#app");
 
-app.innerHTML = `
+const appTemplate = `
   <main class="shell">
     <section class="hero">
       <div class="hero__copy">
@@ -170,6 +179,40 @@ app.innerHTML = `
       <div class="hero__visual">
         <img src="./3d/661.jpeg" alt="3D product reference" />
       </div>
+    </section>
+
+    <section class="account-bar">
+      <div class="account-title">
+        <span>当前账号</span>
+        <strong id="accountUserName">未登录</strong>
+      </div>
+      <div class="account-actions">
+        <button id="adminToggle" class="secondary account-button" type="button" hidden>员工账号管理</button>
+        <button id="logoutBtn" class="secondary account-button" type="button">退出登录</button>
+      </div>
+    </section>
+
+    <section id="adminPanel" class="admin-panel field--hidden" aria-label="员工账号管理">
+      <div class="admin-panel__head">
+        <div>
+          <p class="eyebrow">Admin</p>
+          <h2>员工账号管理</h2>
+        </div>
+        <p id="employeeAccountMessage" class="admin-message"></p>
+      </div>
+      <form id="employeeCreateForm" class="employee-form">
+        <label>
+          员工账号
+          <input id="employeeUsername" type="text" autocomplete="off" placeholder="输入员工账号" />
+        </label>
+        <label>
+          员工密码
+          <input id="employeePassword" type="text" autocomplete="off" placeholder="输入员工密码" />
+        </label>
+        <button id="generateEmployeeCredentials" class="secondary account-button" type="button">随机生成</button>
+        <button class="primary account-button" type="submit">新增员工</button>
+      </form>
+      <div id="employeeAccountList" class="employee-list"></div>
     </section>
 
     <section class="workbench">
@@ -319,6 +362,310 @@ app.innerHTML = `
     </section>
   </main>
 `;
+
+function bootstrap() {
+  ensureEmployeeStore();
+  currentUser = readSessionUser();
+  if (currentUser) {
+    renderAppShell();
+    return;
+  }
+  renderLoginScreen();
+}
+
+function renderLoginScreen(message = "") {
+  currentUser = null;
+  app.innerHTML = `
+    <main class="auth-shell">
+      <section class="auth-card">
+        <p class="eyebrow">Account Login</p>
+        <h1>严宇杰老板专属小工具</h1>
+        <p class="subcopy">请先登录账号，登录后才能使用批量 3D 商品图生成工具。</p>
+        <form id="loginForm" class="auth-form">
+          <label>
+            账号
+            <input id="loginUsername" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            密码
+            <input id="loginPassword" type="password" autocomplete="current-password" required />
+          </label>
+          <button class="primary auth-submit" type="submit">登录使用</button>
+          <p id="authMessage" class="auth-message">${escapeHtml(message)}</p>
+        </form>
+      </section>
+    </main>
+  `;
+  bindLoginEvents();
+}
+
+function renderAppShell() {
+  app.innerHTML = appTemplate;
+  renderIcons();
+  fillBackgrounds();
+  bindEvents();
+  bindAuthEvents();
+  renderAccountUi();
+  updateUi();
+}
+
+function ensureEmployeeStore() {
+  if (!window.localStorage.getItem(AUTH_STORAGE_KEY)) {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, "[]");
+  }
+}
+
+function readEmployeeAccounts() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(AUTH_STORAGE_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((account) => account && typeof account.username === "string" && typeof account.password === "string")
+      .map((account) => ({
+        id: account.id || createId("employee"),
+        username: account.username.trim(),
+        password: account.password,
+        createdAt: account.createdAt || new Date().toISOString(),
+      }))
+      .filter((account) => account.username);
+  } catch {
+    return [];
+  }
+}
+
+function saveEmployeeAccounts(accounts) {
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(accounts));
+}
+
+function readSessionUser() {
+  try {
+    const session = JSON.parse(window.sessionStorage.getItem(AUTH_SESSION_KEY) || "null");
+    if (!session) return null;
+    if (session.role === "admin" && session.username === ADMIN_ACCOUNT.username) {
+      return { role: "admin", username: ADMIN_ACCOUNT.username };
+    }
+    if (session.role === "employee") {
+      const account = readEmployeeAccounts().find((item) => item.id === session.id && item.password === session.password);
+      if (account) return { role: "employee", id: account.id, username: account.username, password: account.password };
+    }
+  } catch {
+    window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+  }
+  window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+  return null;
+}
+
+function writeSessionUser(user) {
+  const payload =
+    user.role === "admin"
+      ? { role: "admin", username: user.username }
+      : { role: "employee", id: user.id, username: user.username, password: user.password };
+  window.sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(payload));
+}
+
+function authenticate(username, password) {
+  if (username === ADMIN_ACCOUNT.username && password === ADMIN_ACCOUNT.password) {
+    return { role: "admin", username: ADMIN_ACCOUNT.username };
+  }
+  const employee = readEmployeeAccounts().find((account) => account.username === username && account.password === password);
+  if (!employee) return null;
+  return { role: "employee", id: employee.id, username: employee.username, password: employee.password };
+}
+
+function bindLoginEvents() {
+  document.querySelector("#loginForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const username = document.querySelector("#loginUsername").value.trim();
+    const password = document.querySelector("#loginPassword").value;
+    const user = authenticate(username, password);
+    if (!user) {
+      document.querySelector("#authMessage").textContent = "账号或密码不正确";
+      return;
+    }
+    currentUser = user;
+    writeSessionUser(user);
+    renderAppShell();
+  });
+}
+
+function bindAuthEvents() {
+  document.querySelector("#logoutBtn")?.addEventListener("click", () => {
+    window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+    resetWorkspaceState();
+    renderLoginScreen("已退出登录");
+  });
+
+  document.querySelector("#adminToggle")?.addEventListener("click", () => {
+    const panel = document.querySelector("#adminPanel");
+    if (!panel) return;
+    panel.classList.toggle("field--hidden");
+    renderEmployeeAccountList();
+  });
+
+  document.querySelector("#generateEmployeeCredentials")?.addEventListener("click", () => {
+    document.querySelector("#employeeUsername").value = createSuggestedUsername();
+    document.querySelector("#employeePassword").value = createSuggestedPassword();
+    setEmployeeMessage("已随机生成账号和密码，可以直接新增或手动修改");
+  });
+
+  document.querySelector("#employeeCreateForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const usernameInput = document.querySelector("#employeeUsername");
+    const passwordInput = document.querySelector("#employeePassword");
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value.trim();
+    const validation = validateEmployeeAccount(username, password);
+    if (validation) {
+      setEmployeeMessage(validation);
+      return;
+    }
+    const accounts = readEmployeeAccounts();
+    if (accounts.some((account) => account.username === username)) {
+      setEmployeeMessage("这个员工账号已经存在");
+      return;
+    }
+    accounts.push({ id: createId("employee"), username, password, createdAt: new Date().toISOString() });
+    saveEmployeeAccounts(accounts);
+    usernameInput.value = "";
+    passwordInput.value = "";
+    renderEmployeeAccountList("已新增员工账号");
+  });
+
+  document.querySelector("#employeeAccountList")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-employee-action]");
+    if (!button) return;
+    const row = button.closest("[data-employee-id]");
+    if (!row) return;
+    const id = row.dataset.employeeId;
+    const action = button.dataset.employeeAction;
+    if (action === "save") {
+      saveEmployeeAccountFromRow(row, id);
+      return;
+    }
+    if (action === "delete") {
+      deleteEmployeeAccount(id);
+    }
+  });
+}
+
+function renderAccountUi() {
+  const label = document.querySelector("#accountUserName");
+  const adminToggle = document.querySelector("#adminToggle");
+  if (label) label.textContent = currentUser?.role === "admin" ? `管理员：${currentUser.username}` : `员工：${currentUser?.username || ""}`;
+  if (adminToggle) adminToggle.hidden = currentUser?.role !== "admin";
+  renderEmployeeAccountList();
+}
+
+function renderEmployeeAccountList(message = "") {
+  const list = document.querySelector("#employeeAccountList");
+  if (!list) return;
+  if (currentUser?.role !== "admin") {
+    list.innerHTML = "";
+    return;
+  }
+  const accounts = readEmployeeAccounts();
+  if (!accounts.length) {
+    list.innerHTML = `<p class="muted">还没有员工账号。可以手动输入，也可以点击随机生成。</p>`;
+    setEmployeeMessage(message);
+    return;
+  }
+  list.innerHTML = accounts
+    .map(
+      (account, index) => `
+        <div class="employee-row" data-employee-id="${escapeHtml(account.id)}">
+          <span class="employee-index">${index + 1}</span>
+          <label>
+            账号
+            <input class="employee-row-username" type="text" value="${escapeHtml(account.username)}" autocomplete="off" />
+          </label>
+          <label>
+            密码
+            <input class="employee-row-password" type="text" value="${escapeHtml(account.password)}" autocomplete="off" />
+          </label>
+          <button class="secondary account-button" type="button" data-employee-action="save">保存</button>
+          <button class="secondary account-button account-button--danger" type="button" data-employee-action="delete">删除</button>
+        </div>
+      `,
+    )
+    .join("");
+  setEmployeeMessage(message);
+}
+
+function saveEmployeeAccountFromRow(row, id) {
+  const username = row.querySelector(".employee-row-username").value.trim();
+  const password = row.querySelector(".employee-row-password").value.trim();
+  const validation = validateEmployeeAccount(username, password);
+  if (validation) {
+    setEmployeeMessage(validation);
+    return;
+  }
+  const accounts = readEmployeeAccounts();
+  const current = accounts.find((account) => account.id === id);
+  if (!current) {
+    renderEmployeeAccountList("这个员工账号已经不存在");
+    return;
+  }
+  if (accounts.some((account) => account.id !== id && account.username === username)) {
+    setEmployeeMessage("这个员工账号已经被其他员工使用");
+    return;
+  }
+  current.username = username;
+  current.password = password;
+  saveEmployeeAccounts(accounts);
+  renderEmployeeAccountList("员工账号已更新");
+}
+
+function deleteEmployeeAccount(id) {
+  const accounts = readEmployeeAccounts();
+  const nextAccounts = accounts.filter((account) => account.id !== id);
+  saveEmployeeAccounts(nextAccounts);
+  renderEmployeeAccountList(nextAccounts.length === accounts.length ? "这个员工账号已经不存在" : "员工账号已删除");
+}
+
+function validateEmployeeAccount(username, password) {
+  if (!username) return "员工账号不能为空";
+  if (!password) return "员工密码不能为空";
+  if (username === ADMIN_ACCOUNT.username) return "员工账号不能和管理员账号相同";
+  return "";
+}
+
+function setEmployeeMessage(message) {
+  const node = document.querySelector("#employeeAccountMessage");
+  if (node) node.textContent = message || "";
+}
+
+function createSuggestedUsername() {
+  const suffix = String(Date.now()).slice(-6);
+  return `staff${suffix}`;
+}
+
+function createSuggestedPassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  let password = "";
+  for (let index = 0; index < 10; index += 1) {
+    password += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return password;
+}
+
+function createId(prefix) {
+  return `${prefix}-${globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+}
+
+function resetWorkspaceState() {
+  clearRendered();
+  revokeProductFileUrls();
+  state.fileItems = [];
+  state.files = [];
+  state.productShape = "";
+  state.userBackgrounds.forEach((background) => {
+    if (background.url) URL.revokeObjectURL(background.url);
+    releaseDecodedImage(background.image);
+  });
+  state.userBackgrounds = [];
+  state.activeBackgroundId = null;
+  revokePreview();
+}
 
 function renderIcons() {
   const map = {
@@ -3426,9 +3773,6 @@ const iconRefresh = svg('<path d="M21 12a9 9 0 0 0-15-6.7L3 8"></path><path d="M
 const iconSliders = svg('<path d="M21 4H14"></path><path d="M10 4H3"></path><path d="M21 12H12"></path><path d="M8 12H3"></path><path d="M21 20H16"></path><path d="M12 20H3"></path><path d="M14 2v4"></path><path d="M8 10v4"></path><path d="M16 18v4"></path>');
 const iconSparkles = svg('<path d="m12 3-1.9 5.8L4 11l6.1 2.2L12 19l1.9-5.8L20 11l-6.1-2.2Z"></path><path d="M5 3v4"></path><path d="M3 5h4"></path><path d="M19 17v4"></path><path d="M17 19h4"></path>');
 
-renderIcons();
-fillBackgrounds();
-bindEvents();
-updateUi();
+bootstrap();
 
 
