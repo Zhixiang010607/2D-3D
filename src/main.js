@@ -25,6 +25,7 @@ const state = {
   rendered: [],
   selectedRenderedIndex: -1,
   previewUrl: "",
+  viewMode: "edit",
   processing: false,
   productShape: "",
   options: {
@@ -319,7 +320,7 @@ const appTemplate = `
       <section class="preview">
         <div class="preview__toolbar">
           <div>
-            <p class="eyebrow">Preview</p>
+            <p id="previewModeLabel" class="eyebrow">实时预览</p>
             <h2 id="statusTitle">等待上传图片</h2>
           </div>
           <span id="countPill" class="pill">0 张图片</span>
@@ -916,6 +917,7 @@ async function handleBackgroundFiles(event) {
 
 async function renderPreview({ forceProductPreview = false } = {}) {
   if (state.processing) return;
+  state.viewMode = "edit";
   if (state.files.length && !hasSelectedProductShape()) {
     paintShapeRequiredStage();
     return;
@@ -964,7 +966,7 @@ function scheduleLivePreview({ forceProductPreview = false, immediate = false } 
 }
 
 async function renderLivePreview({ forceProductPreview = false, requestId = ++livePreviewRequestId } = {}) {
-  if (state.processing || !hasSelectedProductShape()) {
+  if (state.processing || state.viewMode !== "edit" || !hasSelectedProductShape()) {
     if (requestId === livePreviewRequestId) setLivePreviewLoading(false);
     return;
   }
@@ -983,7 +985,7 @@ async function renderLivePreview({ forceProductPreview = false, requestId = ++li
       badge: false,
     };
     const blob = await renderProduct(productItem.file, previewOptions, backgroundItem);
-    if (requestId !== livePreviewRequestId || state.processing) return;
+    if (requestId !== livePreviewRequestId || state.processing || state.viewMode !== "edit") return;
     const previousPreviewUrl = state.previewUrl;
     state.previewUrl = URL.createObjectURL(blob);
     if (previousPreviewUrl) URL.revokeObjectURL(previousPreviewUrl);
@@ -1001,6 +1003,7 @@ async function renderLivePreview({ forceProductPreview = false, requestId = ++li
 }
 
 function setLivePreviewImage(url) {
+  if (state.viewMode !== "edit") return;
   const canvas = document.querySelector(".placement-canvas");
   if (!canvas || !url) return;
   let image = canvas.querySelector(".placement-live-preview");
@@ -1086,15 +1089,23 @@ async function renderAll() {
   state.processing = false;
   state.selectedRenderedIndex = state.rendered.length ? 0 : -1;
   updateUi("已生成，准备打包下载");
-  renderPreview();
+  if (state.rendered.length) {
+    showRenderedResult(0, "已生成，点击右侧生成图列表可以切换查看");
+  } else {
+    renderPreview();
+  }
 }
 
 async function downloadZip() {
-  if (!state.rendered.length) return;
+  const validation = validateRenderedForDownload();
+  if (!validation.ready) {
+    updateUi(validation.message);
+    return;
+  }
   state.processing = true;
   updateUi("正在打包 ZIP...");
   try {
-    const content = await makeZipFromRendered(state.rendered, (done, total) => {
+    const content = await makeZipFromRendered(validation.items, (done, total) => {
       if (done === total || done % 20 === 0) {
         document.querySelector("#statusTitle").textContent = `正在打包 ZIP ${done} / ${total}`;
       }
@@ -1229,6 +1240,7 @@ function clearRendered() {
   });
   state.rendered = [];
   state.selectedRenderedIndex = -1;
+  state.viewMode = "edit";
 }
 
 function clearRenderedResults() {
@@ -1236,11 +1248,73 @@ function clearRenderedResults() {
   clearRendered();
   revokePreview();
   updateUi("已清空 3D 效果，可以继续调整占位");
-  renderPreview();
+  paintClearedPreviewStage();
+}
+
+function paintClearedPreviewStage() {
+  state.viewMode = "edit";
+  if (state.files.length && !hasSelectedProductShape()) {
+    paintShapeRequiredStage();
+    return;
+  }
+  if (state.files.length && !getSelectedProductItems().length) {
+    paintNoSelectedProductsStage();
+    return;
+  }
+  const focusedBackground = getFocusedBackground();
+  if (focusedBackground && hasSelectedProductShape()) {
+    paintPlacementStage(focusedBackground);
+    return;
+  }
+  paintEmptyStage();
 }
 
 function getActiveBackgroundPresets() {
   return state.userBackgrounds.filter((background) => background.selected);
+}
+
+function getExpectedRenderPlan() {
+  const selectedItems = getSelectedProductItems();
+  const activeBackgrounds = getActiveBackgroundPresets();
+  return {
+    selectedItems,
+    activeBackgrounds,
+    total: selectedItems.length * activeBackgrounds.length,
+  };
+}
+
+function getRenderedItemsForCurrentPlan() {
+  const { selectedItems, activeBackgrounds } = getExpectedRenderPlan();
+  const items = [];
+  for (const fileItem of selectedItems) {
+    for (const backgroundItem of activeBackgrounds) {
+      const renderedItem = state.rendered.find((item) => item.file === fileItem.file && item.backgroundItem?.id === backgroundItem.id);
+      if (renderedItem) items.push(renderedItem);
+    }
+  }
+  return items;
+}
+
+function validateRenderedForDownload() {
+  const { selectedItems, activeBackgrounds, total } = getExpectedRenderPlan();
+  if (!selectedItems.length) {
+    return { ready: false, items: [], message: "请先勾选至少一张产品图片，再生成 3D 效果" };
+  }
+  if (!hasSelectedProductShape()) {
+    return { ready: false, items: [], message: "请先选择图片形状，再生成 3D 效果" };
+  }
+  if (!activeBackgrounds.length) {
+    return { ready: false, items: [], message: "请先勾选至少一个背景，再生成 3D 效果" };
+  }
+  const items = getRenderedItemsForCurrentPlan();
+  if (items.length !== total) {
+    return {
+      ready: false,
+      items,
+      message: `当前只生成了 ${items.length} / ${total} 张批量 3D 成品。中间实时预览不算 ZIP 成品，请先点击生成 3D 效果`,
+    };
+  }
+  return { ready: true, items, message: "" };
 }
 
 function getFocusedBackground() {
@@ -1373,8 +1447,6 @@ function createDefaultPlacement(shape = "circle") {
     shortAxis: 80,
     fixedScale: 100,
     rotation: 0,
-    depthTilt: 0,
-    horizontalTilt: 0,
     fineTune: false,
     tuneLineColor: "black",
     quadCorners: null,
@@ -1423,8 +1495,6 @@ function normalizePlacementLayout(layout) {
   }
   base.fixedScale = clamp(numberOr(base.fixedScale, 100), 0, 180);
   base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
-  base.depthTilt = clamp(Math.round(numberOr(base.depthTilt, 0) * 10) / 10, -75, 75);
-  base.horizontalTilt = clamp(Math.round(numberOr(base.horizontalTilt ?? base.pitchTilt, 0) * 10) / 10, -75, 75);
   base.fineTune = Boolean(base.fineTune) && (base.shape === "rectangle" || base.shape === "polygon");
   base.tuneLineColor = normalizeTuneLineColor(base.tuneLineColor);
   base.quadCorners =
@@ -1704,21 +1774,6 @@ function isRoundPlacementShape(layout) {
   return shape === "circle" || shape === "ellipse";
 }
 
-function placementDepthTiltView(layout) {
-  const normalized = normalizePlacementLayout(layout);
-  if (!isRoundPlacementShape(normalized)) return { x: 1, y: 1, yaw: 0, pitch: 0 };
-  const yawTilt = normalized.depthTilt;
-  const pitchTilt = normalized.horizontalTilt;
-  const yawScale = clamp(Math.cos((Math.abs(yawTilt) * Math.PI) / 180), 0.24, 1);
-  const pitchScale = clamp(Math.cos((Math.abs(pitchTilt) * Math.PI) / 180), 0.24, 1);
-  return {
-    x: yawScale,
-    y: pitchScale,
-    yaw: -yawTilt / 75,
-    pitch: -pitchTilt / 75,
-  };
-}
-
 function normalizeTuneLineColor(value) {
   if (value === "red" || value === "#f04438" || value === "#ff0000") return "red";
   return value === "white" || value === "#fff" || value === "#ffffff" ? "white" : "black";
@@ -1816,11 +1871,9 @@ function fitRoundPlacementStretch(layout, axis, point) {
   if (!isRoundPlacementShape(normalized)) return normalized;
   const localPoint = localPointFromCanvasPercent(normalized, point);
   const roundBase = roundPlacementBaseDimensions(normalized.shape);
-  const depthTiltView = placementDepthTiltView(normalized);
-  const visualScale = axis === "x" ? depthTiltView.x : depthTiltView.y;
   const baseSize = axis === "x" ? roundBase.width : roundBase.height;
   const distance = Math.abs(axis === "x" ? localPoint.x : localPoint.y);
-  const placementSize = (distance * 2) / Math.max(0.001, visualScale);
+  const placementSize = distance * 2;
   const nextStretch = clamp(Math.round((placementSize / (baseSize * PLACEMENT_DIMENSION_SCALE)) * 1000) / 10, 0, 220);
   return normalizePlacementLayout({
     ...normalized,
@@ -2500,7 +2553,6 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
       const radius = renderMetrics.radius;
       if (radius > 0) {
         const viewDepth = 1.16;
-        const depthTiltView = placementDepthTiltView(placementLayout);
         drawBadgeView(
           ctx,
           source,
@@ -2510,10 +2562,10 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
             cy: placementLayout.y / 100,
             r: radius,
             depth: viewDepth,
-            x: depthTiltView.x,
-            y: depthTiltView.y,
-            yaw: depthTiltView.yaw,
-            pitch: depthTiltView.pitch,
+            x: 1,
+            y: 1,
+            yaw: 0,
+            pitch: 0,
             rot: placementRotationRad(placementLayout),
             primary: true,
           },
@@ -3248,6 +3300,7 @@ function drawMaterialFinish(ctx, view) {
         ctx.fillRect(-rx, y, rx * 2, 1);
       }
     }
+
     ctx.restore();
   });
 }
@@ -3436,9 +3489,10 @@ function updateUi(status) {
   const productUploadLocked = state.processing;
   const controlsLocked = !hasFiles || waitingForShape || state.processing;
   const total = selectedCount * getActiveBackgroundPresets().length;
+  const downloadReady = validateRenderedForDownload().ready;
   document.querySelector("#renderBtn").disabled = !selectedCount || !hasShape || !getActiveBackgroundPresets().length || controlsLocked;
   document.querySelector("#clearRenderedBtn").disabled = !state.rendered.length || controlsLocked;
-  document.querySelector("#downloadBtn").disabled = !state.rendered.length || controlsLocked;
+  document.querySelector("#downloadBtn").disabled = !downloadReady || controlsLocked;
   ["productInput", "folderInput"].forEach((id) => {
     const control = document.querySelector(`#${id}`);
     if (control) control.disabled = productUploadLocked;
@@ -3454,6 +3508,7 @@ function updateUi(status) {
   document.querySelector("#statusTitle").textContent =
     status || (hasFiles ? (hasShape ? (selectedCount ? "已上传图片，可以生成" : "请至少勾选一张上传图片") : "已上传图片，请先选择图片形状") : "等待上传图片");
   document.querySelector("#countPill").textContent = `${total} 张成品`;
+  if (state.viewMode !== "result") document.querySelector("#previewModeLabel").textContent = "实时预览";
   document.querySelector("#renderBtn").innerHTML = state.processing
     ? `<span data-icon="loader" class="spin"></span> 正在生成`
     : `<span data-icon="sparkles"></span> 生成 3D 效果`;
@@ -3697,13 +3752,11 @@ function paintPlacementStage(backgroundItem, options = {}) {
   const fit = state.options.backgroundFit;
   const controls = placementControlModel(layout);
   const shapeLabel = getSelectedProductShapeLabel();
-  const depthTiltView = placementDepthTiltView(layout);
   const views =
     layoutMode === "free"
-      ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout), ...depthTiltView }]
+      ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
       : getFixedLayoutPlaceholderViews(layoutMode);
   const fixedScaleMultiplier = layoutMode === "free" ? 1 : layout.fixedScale / 100;
-  const depthTiltEnabled = layoutMode === "free" && isRoundPlacementShape(layout);
   const fineTuneEnabled = layoutMode === "free" && (layout.shape === "rectangle" || layout.shape === "polygon");
   const fineTuneActive = fineTuneEnabled && layout.fineTune;
   const lockPrimary = fineTuneActive && (layout.shape === "rectangle" || layout.shape === "polygon");
@@ -3746,14 +3799,6 @@ function paintPlacementStage(backgroundItem, options = {}) {
           <span>旋转角度</span>
           <input id="placementRotation" class="number-control" type="number" min="-180" max="180" step="0.1" value="${layout.rotation}" />
         </label>
-        <label class="placement-control ${depthTiltEnabled ? "" : "field--hidden"}">
-          <span>内外转角</span>
-          <input id="placementDepthTilt" class="number-control" type="number" min="-75" max="75" step="0.1" value="${layout.depthTilt}" />
-        </label>
-        <label class="placement-control ${depthTiltEnabled ? "" : "field--hidden"}">
-          <span>水平轴旋转</span>
-          <input id="placementHorizontalTilt" class="number-control" type="number" min="-75" max="75" step="0.1" value="${layout.horizontalTilt}" />
-        </label>
         <label class="placement-control placement-control--toggle ${fineTuneEnabled ? "" : "field--hidden"}">
           <span>${layout.shape === "polygon" ? "顶点微调" : "四角微调"}</span>
           <input id="placementFineTune" type="checkbox" ${layout.fineTune ? "checked" : ""} />
@@ -3781,24 +3826,21 @@ function bindPlacementStage(backgroundItem) {
   const secondaryInput = stage.querySelector("#placementSecondary");
   const sidesInput = stage.querySelector("#placementSides");
   const rotationInput = stage.querySelector("#placementRotation");
-  const depthTiltInput = stage.querySelector("#placementDepthTilt");
-  const horizontalTiltInput = stage.querySelector("#placementHorizontalTilt");
   const fixedScaleInput = stage.querySelector("#placementFixedScale");
   const fineTuneInput = stage.querySelector("#placementFineTune");
   const tuneLineColorInput = stage.querySelector("#placementTuneLineColor");
   const fixedScaleLabel = stage.querySelector("[data-placement-value='fixedScale']");
   const badgeMarker = stage.querySelector(".badge-marker");
   const layoutMode = getBackgroundLayoutMode(backgroundItem);
-  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !depthTiltInput || !horizontalTiltInput || !fixedScaleInput || !fineTuneInput || !tuneLineColorInput || !fixedScaleLabel) return;
+  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !fixedScaleInput || !fineTuneInput || !tuneLineColorInput || !fixedScaleLabel) return;
 
   const updateShapeElement = () => {
     const layout = placementLayoutForBackground(backgroundItem);
     const controls = placementControlModel(layout);
     backgroundItem.freeLayout = layout;
-    const depthTiltView = placementDepthTiltView(layout);
     const views =
       layoutMode === "free"
-        ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout), ...depthTiltView }]
+        ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
         : getFixedLayoutPlaceholderViews(layoutMode);
     const fixedScaleMultiplier = layoutMode === "free" ? 1 : layout.fixedScale / 100;
     shapes.forEach((shape, index) => {
@@ -3838,8 +3880,6 @@ function bindPlacementStage(backgroundItem) {
     secondaryInput.value = controls.secondaryValue || 0;
     sidesInput.value = layout.sides;
     rotationInput.value = layout.rotation;
-    depthTiltInput.value = layout.depthTilt;
-    horizontalTiltInput.value = layout.horizontalTilt;
     fixedScaleInput.value = layout.fixedScale;
     fineTuneInput.checked = layout.fineTune;
     tuneLineColorInput.value = layout.tuneLineColor;
@@ -3850,7 +3890,7 @@ function bindPlacementStage(backgroundItem) {
     primaryInput.disabled = lockPrimary;
     secondaryInput.disabled = lockSecondary;
     sidesInput.disabled = lockSides;
-    clearNumberInputState(primaryInput, secondaryInput, sidesInput, rotationInput, depthTiltInput, horizontalTiltInput);
+    clearNumberInputState(primaryInput, secondaryInput, sidesInput, rotationInput);
   };
 
   const savePlacementChange = (message) => {
@@ -4043,26 +4083,6 @@ function bindPlacementStage(backgroundItem) {
     savePlacementChange("旋转角度已更新，可以重新生成");
   });
 
-  depthTiltInput.addEventListener("input", (event) => {
-    const layout = placementLayoutForBackground(backgroundItem);
-    if (!isRoundPlacementShape(layout)) return;
-    const value = readBoundedNumberInput(event.target);
-    if (value === null) return;
-    backgroundItem.freeLayout = { ...layout, depthTilt: Math.round(value * 10) / 10 };
-    updateShapeElement();
-    savePlacementChange("内外转角已更新，可以重新生成");
-  });
-
-  horizontalTiltInput.addEventListener("input", (event) => {
-    const layout = placementLayoutForBackground(backgroundItem);
-    if (!isRoundPlacementShape(layout)) return;
-    const value = readBoundedNumberInput(event.target);
-    if (value === null) return;
-    backgroundItem.freeLayout = { ...layout, horizontalTilt: Math.round(value * 10) / 10 };
-    updateShapeElement();
-    savePlacementChange("水平轴旋转已更新，可以重新生成");
-  });
-
   fixedScaleInput.addEventListener("input", (event) => {
     const layout = placementLayoutForBackground(backgroundItem);
     backgroundItem.freeLayout = { ...layout, fixedScale: clamp(Number(event.target.value), 0, 180) };
@@ -4089,6 +4109,20 @@ function paintPreview(url, { interactiveBadge = false } = {}) {
   }
 }
 
+function showRenderedResult(index, status) {
+  const item = state.rendered[index];
+  if (!item) return;
+  state.viewMode = "result";
+  revokePreview();
+  state.selectedRenderedIndex = index;
+  paintPreview(item.url);
+  document.querySelector("#previewModeLabel").textContent = "成品预览";
+  document.querySelector("#statusTitle").textContent = status || `已显示 ${item.name}`;
+  document.querySelector("#countPill").textContent = `${state.rendered.length} 张成品`;
+  paintFileList(state.rendered.length);
+  renderIcons();
+}
+
 function paintFileList(doneCount) {
   const list = document.querySelector("#fileList");
   const locked = isWaitingForProductShape() || state.processing;
@@ -4108,8 +4142,7 @@ function paintFileList(doneCount) {
       button.addEventListener("click", () => {
         if (locked) return;
         const index = Number(button.dataset.renderedIndex);
-        state.selectedRenderedIndex = index;
-        updateUi(`已选中 ${state.rendered[index].name}，中间工作区仍保持实时编辑预览`);
+        showRenderedResult(index, `已显示 ${state.rendered[index].name}`);
       });
     });
     return;
