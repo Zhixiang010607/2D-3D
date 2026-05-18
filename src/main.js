@@ -893,6 +893,7 @@ async function handleBackgroundFiles(event) {
   const limited = isDirectImageUpload && imageCount > MAX_UPLOAD_FILES_PER_BATCH;
   if (limited) files = files.slice(0, MAX_UPLOAD_FILES_PER_BATCH);
   if (!files.length) return;
+  const hadBackgrounds = state.userBackgrounds.length > 0;
   clearRendered();
   for (const file of files) {
     const image = await loadImage(file);
@@ -904,10 +905,16 @@ async function handleBackgroundFiles(event) {
       url: URL.createObjectURL(file),
       name: file.name.replace(/\.[^.]+$/, ""),
       selected: true,
-      layoutMode: "frontGallery",
+      layoutMode: "free",
       freeLayout: createDefaultPlacement(getSelectedProductShape() || "circle"),
     });
     if (!state.activeBackgroundId) state.activeBackgroundId = id;
+  }
+  if (!hadBackgrounds) {
+    state.options.depth = 0;
+    const depthInput = document.querySelector("#depth");
+    if (depthInput) depthInput.value = "0";
+    syncOptionLabels();
   }
   event.target.value = "";
   paintBackgroundLibrary();
@@ -1326,8 +1333,8 @@ function setFocusedBackground(id) {
 }
 
 function getBackgroundLayoutMode(backgroundItem) {
-  const modes = new Set(["frontGallery", "frontDuo", "frontGrid", "gallery", "hero", "duo", "triptych", "catalog", "floating", "free"]);
-  return modes.has(backgroundItem?.layoutMode) ? backgroundItem.layoutMode : "frontGallery";
+  if (backgroundItem) backgroundItem.layoutMode = "free";
+  return "free";
 }
 
 function getSelectedProductShape() {
@@ -1544,6 +1551,24 @@ function placementDimensions(layout, scaleMultiplier = 1) {
   };
 }
 
+function fixedCirclePlacementDimensions(scaleMultiplier = 1) {
+  const diameter = roundPlacementBaseDimensions("circle").width;
+  const size = clamp(diameter * PLACEMENT_DIMENSION_SCALE * scaleMultiplier, 0, 94);
+  return { width: size, height: size };
+}
+
+function isFixedLayoutMode(layoutMode) {
+  return layoutMode === "frontGallery" || layoutMode === "frontDuo" || layoutMode === "frontGrid" || layoutMode === "hero";
+}
+
+function placementDimensionsForView(layout, scaleMultiplier = 1, options = {}) {
+  const normalized = normalizePlacementLayout(layout);
+  if (options.preserveCircle && normalized.shape === "circle") {
+    return fixedCirclePlacementDimensions(scaleMultiplier);
+  }
+  return placementDimensions(normalized, scaleMultiplier);
+}
+
 function defaultPlacementQuadCorners(dimensions) {
   const halfWidth = dimensions.width / 2;
   const halfHeight = dimensions.height / 2;
@@ -1609,9 +1634,9 @@ function placementPolygonPoints(layout) {
   return normalizePlacementPolygonPoints(normalized.polygonPoints, normalized.sides, placementDimensions(normalized));
 }
 
-function placementRenderMetrics(layout, scaleMultiplier = 1) {
+function placementRenderMetrics(layout, scaleMultiplier = 1, options = {}) {
   const normalized = normalizePlacementLayout(layout);
-  const dimensions = placementDimensions(normalized, scaleMultiplier);
+  const dimensions = placementDimensionsForView(normalized, scaleMultiplier, options);
   const maxDimension = Math.max(dimensions.width, dimensions.height);
   if (maxDimension <= 0) {
     return {
@@ -2402,33 +2427,36 @@ function getFixedLayoutPlaceholderViews(layoutMode) {
 }
 
 function placementShapeMarkup(layout, view, options = {}) {
-  const dimensions = placementDimensions(layout, options.scaleMultiplier ?? 1);
+  const normalized = normalizePlacementLayout(layout);
+  const dimensions = placementDimensionsForView(normalized, options.scaleMultiplier ?? 1, options);
   const scale = view.r / 0.34;
-  const width = clamp(dimensions.width * scale * (view.x ?? 1), 0, 98);
-  const height = clamp(dimensions.height * scale * (view.y ?? 1), 0, 98);
-  const fineTuneActive = Boolean(options.fineTuneActive) && (layout.shape === "rectangle" || layout.shape === "polygon");
-  const cornerTune = fineTuneActive && layout.shape === "rectangle";
-  const polygonTune = fineTuneActive && layout.shape === "polygon";
-  const roundResize = Boolean(options.draggable) && isRoundPlacementShape(layout);
+  const viewScaleX = options.preserveCircle && normalized.shape === "circle" ? 1 : view.x ?? 1;
+  const viewScaleY = options.preserveCircle && normalized.shape === "circle" ? 1 : view.y ?? 1;
+  const width = clamp(dimensions.width * scale * viewScaleX, 0, 98);
+  const height = clamp(dimensions.height * scale * viewScaleY, 0, 98);
+  const fineTuneActive = Boolean(options.fineTuneActive) && (normalized.shape === "rectangle" || normalized.shape === "polygon");
+  const cornerTune = fineTuneActive && normalized.shape === "rectangle";
+  const polygonTune = fineTuneActive && normalized.shape === "polygon";
+  const roundResize = Boolean(options.draggable) && isRoundPlacementShape(normalized);
   const classes = [
     "placement-stage-shape",
-    `placement-stage-shape--${layout.shape}`,
+    `placement-stage-shape--${normalized.shape}`,
     options.draggable ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed",
     roundResize ? "placement-stage-shape--resizable" : "",
     fineTuneActive ? "placement-stage-shape--fine-tune" : "",
   ].join(" ");
   const content =
-    layout.shape === "polygon"
-      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${polygonTune ? placementPolygonSvgPoints(layout, dimensions) : regularPolygonSvgPoints(layout.sides)}"></polygon></svg>${polygonTune ? placementPolygonHandlesMarkup(layout, dimensions) : ""}`
+    normalized.shape === "polygon"
+      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${polygonTune ? placementPolygonSvgPoints(normalized, dimensions) : regularPolygonSvgPoints(normalized.sides)}"></polygon></svg>${polygonTune ? placementPolygonHandlesMarkup(normalized, dimensions) : ""}`
       : cornerTune
-        ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${placementQuadSvgPoints(layout, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(layout, dimensions)}`
-        : layout.shape === "rectangle"
+        ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${placementQuadSvgPoints(normalized, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(normalized, dimensions)}`
+        : normalized.shape === "rectangle"
           ? `<svg class="placement-outline-svg placement-outline-svg--rectangle" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${rectangleSvgPoints()}"></polygon></svg>`
         : `<span></span>${roundResize ? roundPlacementResizeHandlesMarkup() : ""}`;
   return `
     <div
       class="${classes}"
-      style="left: ${(view.cx * 100).toFixed(3)}%; top: ${(view.cy * 100).toFixed(3)}%; width: ${width}%; height: ${height}%; --shape-rotate: ${view.rot || 0}rad; --polygon-path: ${regularPolygonClipPath(layout.sides)}; --tune-color: ${placementTuneLineColor(layout)};"
+      style="left: ${(view.cx * 100).toFixed(3)}%; top: ${(view.cy * 100).toFixed(3)}%; width: ${width}%; height: ${height}%; --shape-rotate: ${view.rot || 0}rad; --polygon-path: ${regularPolygonClipPath(normalized.sides)}; --tune-color: ${placementTuneLineColor(normalized)};"
     >
       ${content}
     </div>
@@ -2540,7 +2568,7 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
   const layoutMode = getBackgroundLayoutMode(backgroundItem);
   const placementLayout = placementLayoutForBackground(backgroundItem);
   const fixedScaleMultiplier = layoutMode === "free" ? 1 : placementLayout.fixedScale / 100;
-  const renderMetrics = placementRenderMetrics(placementLayout, fixedScaleMultiplier);
+  const renderMetrics = placementRenderMetrics(placementLayout, fixedScaleMultiplier, { preserveCircle: isFixedLayoutMode(layoutMode) });
   const renderShapeModel = { ...renderMetrics.shapeModel, fixedRotation: layoutMode !== "free" };
   const productScale = layoutMode === "free" ? 1 : renderMetrics.radius / 0.34;
 
@@ -3532,8 +3560,7 @@ function paintBackgroundLibrary() {
   library.innerHTML = state.userBackgrounds
     .map((background, index) => {
       const isFocused = background.id === state.activeBackgroundId;
-      const layoutMode = getBackgroundLayoutMode(background);
-      const shapeLabel = getSelectedProductShapeLabel();
+      background.layoutMode = "free";
       return `
         <div class="background-row ${isFocused ? "background-row--active" : ""} ${locked ? "background-row--disabled" : ""}" data-background-id="${background.id}">
           <label class="background-check">
@@ -3542,27 +3569,6 @@ function paintBackgroundLibrary() {
           </label>
           <input class="background-name" type="text" value="${escapeHtml(background.name)}" aria-label="Background ${index + 1} name" ${locked ? "disabled" : ""} />
           <button class="remove-background" title="删除背景" type="button" ${locked ? "disabled" : ""}>×</button>
-          <div class="background-layout">
-            <select class="background-layout-mode" aria-label="Background ${index + 1} layout mode" ${locked ? "disabled" : ""}>
-              <option value="frontGallery" ${layoutMode === "frontGallery" ? "selected" : ""}>固定：正面主图 + 正面小图</option>
-              <option value="frontDuo" ${layoutMode === "frontDuo" ? "selected" : ""}>固定：正面双图陈列</option>
-              <option value="frontGrid" ${layoutMode === "frontGrid" ? "selected" : ""}>固定：正面四宫格</option>
-              <option value="gallery" ${layoutMode === "gallery" ? "selected" : ""}>透视：主图 + 多角度小图</option>
-              <option value="hero" ${layoutMode === "hero" ? "selected" : ""}>固定：单张高级主图</option>
-              <option value="duo" ${layoutMode === "duo" ? "selected" : ""}>透视：主图 + 侧角特写</option>
-              <option value="triptych" ${layoutMode === "triptych" ? "selected" : ""}>透视：三联商品陈列</option>
-              <option value="catalog" ${layoutMode === "catalog" ? "selected" : ""}>透视：电商目录排版</option>
-              <option value="floating" ${layoutMode === "floating" ? "selected" : ""}>透视：漂浮斜角组合</option>
-              <option value="free" ${layoutMode === "free" ? "selected" : ""}>拖动图形占位</option>
-            </select>
-            <p class="background-placement-note">${
-              !hasSelectedProductShape()
-                ? "先选择图片形状，再配置这个背景的占位"
-                : layoutMode === "free"
-                  ? `在中间预览区拖动${shapeLabel}占位，并调整对应尺寸`
-                  : `${shapeLabel}固定占位会自动标注，可调整体占比`
-            }</p>
-          </div>
         </div>
       `;
     })
@@ -3572,7 +3578,7 @@ function paintBackgroundLibrary() {
     const item = state.userBackgrounds.find((background) => background.id === id);
     row.addEventListener("click", (event) => {
       if (locked) return;
-      if (event.target.closest("select, .background-name, .remove-background")) return;
+      if (event.target.closest(".background-check, .background-name, .remove-background")) return;
       if (state.activeBackgroundId === id) return;
       setFocusedBackground(id);
       paintBackgroundLibrary();
@@ -3596,20 +3602,6 @@ function paintBackgroundLibrary() {
       item.name = event.target.value.trim() || "未命名背景";
       clearRendered();
       updateUi("背景名称已更新，可以重新生成");
-    });
-    row.querySelector(".background-layout-mode").addEventListener("change", (event) => {
-      if (locked) return;
-      setFocusedBackground(id);
-      item.layoutMode = event.target.value;
-      if (item.layoutMode === "free") {
-        state.options.depth = 0;
-        const depthInput = document.querySelector("#depth");
-        if (depthInput) depthInput.value = "0";
-        syncOptionLabels();
-      }
-      clearRendered();
-      updateUi(item.layoutMode === "free" ? "已切换为拖动图形占位，边缘厚度已先设为 0" : "背景排版方式已更新，可以重新生成");
-      renderPreview();
     });
     row.querySelector(".remove-background").addEventListener("click", () => {
       if (locked) return;
@@ -3752,6 +3744,8 @@ function paintPlacementStage(backgroundItem, options = {}) {
   const fit = state.options.backgroundFit;
   const controls = placementControlModel(layout);
   const shapeLabel = getSelectedProductShapeLabel();
+  const preserveFixedCircle = isFixedLayoutMode(layoutMode);
+  const fixedScaleText = preserveFixedCircle && layout.shape === "circle" ? "半径占比" : "整体占比";
   const views =
     layoutMode === "free"
       ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
@@ -3771,7 +3765,7 @@ function paintPlacementStage(backgroundItem, options = {}) {
       <div class="placement-canvas ${livePreviewUrl ? "placement-canvas--live" : ""}" data-background-id="${backgroundItem.id}">
         ${placementBackgroundMarkup(backgroundItem, fit)}
         ${livePreviewUrl ? `<img class="placement-live-preview" src="${livePreviewUrl}" alt="实时 3D 预览" draggable="false" />` : ""}
-        ${views.map((view) => placementShapeMarkup(layout, view, { draggable: layoutMode === "free", scaleMultiplier: fixedScaleMultiplier, fineTuneActive })).join("")}
+        ${views.map((view) => placementShapeMarkup(layout, view, { draggable: layoutMode === "free", scaleMultiplier: fixedScaleMultiplier, fineTuneActive, preserveCircle: preserveFixedCircle })).join("")}
         ${state.options.badge ? badgeMarkerMarkup() : ""}
       </div>
       <div class="placement-controls">
@@ -3780,7 +3774,7 @@ function paintPlacementStage(backgroundItem, options = {}) {
           <strong>${shapeLabel}</strong>
         </div>
         <label class="placement-control placement-control--scale ${layoutMode === "free" ? "field--hidden" : ""}">
-          <span>整体占比 <b data-placement-value="fixedScale">${layout.fixedScale}</b>%</span>
+          <span>${fixedScaleText} <b data-placement-value="fixedScale">${layout.fixedScale}</b>%</span>
           <input id="placementFixedScale" type="range" min="0" max="180" step="5" value="${layout.fixedScale}" />
         </label>
         <label class="placement-control ${layoutMode === "free" ? "" : "field--hidden"} ${lockPrimary ? "placement-control--locked" : ""}">
@@ -3843,17 +3837,20 @@ function bindPlacementStage(backgroundItem) {
         ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
         : getFixedLayoutPlaceholderViews(layoutMode);
     const fixedScaleMultiplier = layoutMode === "free" ? 1 : layout.fixedScale / 100;
+    const preserveFixedCircle = isFixedLayoutMode(layoutMode);
     shapes.forEach((shape, index) => {
       const view = views[index] || views[0];
-      const dimensions = placementDimensions(layout, fixedScaleMultiplier);
+      const dimensions = placementDimensionsForView(layout, fixedScaleMultiplier, { preserveCircle: preserveFixedCircle });
       const scale = view.r / 0.34;
+      const viewScaleX = preserveFixedCircle && layout.shape === "circle" ? 1 : view.x ?? 1;
+      const viewScaleY = preserveFixedCircle && layout.shape === "circle" ? 1 : view.y ?? 1;
       const fineTuneActive = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon");
       const roundResize = layoutMode === "free" && isRoundPlacementShape(layout);
       shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"} ${roundResize ? "placement-stage-shape--resizable" : ""} ${fineTuneActive ? "placement-stage-shape--fine-tune" : ""}`;
       shape.style.left = `${(view.cx * 100).toFixed(3)}%`;
       shape.style.top = `${(view.cy * 100).toFixed(3)}%`;
-      shape.style.width = `${clamp(dimensions.width * scale * (view.x ?? 1), 0, 98)}%`;
-      shape.style.height = `${clamp(dimensions.height * scale * (view.y ?? 1), 0, 98)}%`;
+      shape.style.width = `${clamp(dimensions.width * scale * viewScaleX, 0, 98)}%`;
+      shape.style.height = `${clamp(dimensions.height * scale * viewScaleY, 0, 98)}%`;
       shape.style.setProperty("--shape-rotate", `${view.rot || 0}rad`);
       shape.style.setProperty("--polygon-path", regularPolygonClipPath(layout.sides));
       shape.style.setProperty("--tune-color", placementTuneLineColor(layout));

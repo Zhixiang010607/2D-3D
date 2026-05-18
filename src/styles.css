@@ -502,25 +502,6 @@ select,
   opacity: 0.54;
 }
 
-.background-layout {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 8px;
-}
-
-.background-layout-mode {
-  height: 34px;
-  border-radius: 6px;
-  padding: 0 8px;
-}
-
-.background-placement-note {
-  margin: 0;
-  color: #5d6a63;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
 .free-layout-controls {
   display: grid;
   gap: 8px;
