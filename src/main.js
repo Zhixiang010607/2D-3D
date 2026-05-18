@@ -1,6 +1,8 @@
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_UPLOAD_FILES_PER_BATCH = 50;
 const PREVIEW_MAX_SIZE = 1600;
+const LIVE_PREVIEW_MAX_SIZE = 1200;
+const LIVE_PREVIEW_DEBOUNCE_MS = 160;
 const OUTPUT_JPEG_QUALITY = 0.98;
 const RENDER_UI_UPDATE_INTERVAL = 6;
 const RENDER_YIELD_INTERVAL = 4;
@@ -42,6 +44,8 @@ const state = {
 };
 
 let currentUser = null;
+let livePreviewTimer = null;
+let livePreviewRequestId = 0;
 
 const imageContentRectCache = new WeakMap();
 
@@ -923,8 +927,9 @@ async function renderPreview({ forceProductPreview = false } = {}) {
     return;
   }
   const focusedBackground = getFocusedBackground();
-  if (focusedBackground && !forceProductPreview) {
-    paintPlacementStage(focusedBackground);
+  if (focusedBackground) {
+    paintPlacementStage(focusedBackground, { livePreviewUrl: getLivePreviewUrl(focusedBackground, previewProductItem) });
+    scheduleLivePreview({ forceProductPreview, immediate: true });
     return;
   }
   const previewBackground = forceProductPreview ? state.userBackgrounds[0] || getActiveBackgroundPresets()[0] : focusedBackground?.selected ? focusedBackground : getActiveBackgroundPresets()[0];
@@ -937,6 +942,99 @@ async function renderPreview({ forceProductPreview = false } = {}) {
   revokePreview();
   state.previewUrl = URL.createObjectURL(blob);
   paintPreview(state.previewUrl, { interactiveBadge: state.options.badge });
+}
+
+function scheduleLivePreview({ forceProductPreview = false, immediate = false } = {}) {
+  if (livePreviewTimer) {
+    clearTimeout(livePreviewTimer);
+    livePreviewTimer = null;
+  }
+  if (state.processing) return;
+  const requestId = ++livePreviewRequestId;
+  setLivePreviewLoading(true);
+  const run = () => {
+    livePreviewTimer = null;
+    renderLivePreview({ forceProductPreview, requestId });
+  };
+  if (immediate) {
+    run();
+    return;
+  }
+  livePreviewTimer = setTimeout(run, LIVE_PREVIEW_DEBOUNCE_MS);
+}
+
+async function renderLivePreview({ forceProductPreview = false, requestId = ++livePreviewRequestId } = {}) {
+  if (state.processing || !hasSelectedProductShape()) {
+    if (requestId === livePreviewRequestId) setLivePreviewLoading(false);
+    return;
+  }
+  const selectedItems = getSelectedProductItems();
+  const productItem = forceProductPreview ? state.fileItems[0] || selectedItems[0] : selectedItems[0] || state.fileItems[0];
+  const backgroundItem = getFocusedBackground();
+  if (!productItem || !backgroundItem) {
+    if (requestId === livePreviewRequestId) setLivePreviewLoading(false);
+    return;
+  }
+
+  try {
+    const previewOptions = {
+      ...state.options,
+      size: Math.min(state.options.size, LIVE_PREVIEW_MAX_SIZE),
+      badge: false,
+    };
+    const blob = await renderProduct(productItem.file, previewOptions, backgroundItem);
+    if (requestId !== livePreviewRequestId || state.processing) return;
+    const previousPreviewUrl = state.previewUrl;
+    state.previewUrl = URL.createObjectURL(blob);
+    if (previousPreviewUrl) URL.revokeObjectURL(previousPreviewUrl);
+    setLivePreviewImage(state.previewUrl);
+  } catch (error) {
+    console.error(error);
+    if (requestId === livePreviewRequestId) {
+      const fallbackUrl = getLivePreviewUrl(backgroundItem, productItem);
+      if (fallbackUrl) setLivePreviewImage(fallbackUrl);
+      updateUi("实时预览生成失败，请检查当前图片或参数");
+    }
+  } finally {
+    if (requestId === livePreviewRequestId) setLivePreviewLoading(false);
+  }
+}
+
+function setLivePreviewImage(url) {
+  const canvas = document.querySelector(".placement-canvas");
+  if (!canvas || !url) return;
+  let image = canvas.querySelector(".placement-live-preview");
+  if (!image) {
+    image = document.createElement("img");
+    image.className = "placement-live-preview";
+    image.alt = "Live 3D preview";
+    image.draggable = false;
+    canvas.prepend(image);
+  }
+  image.src = url;
+  canvas.classList.add("placement-canvas--live");
+}
+
+function getLivePreviewUrl(backgroundItem, productItem) {
+  if (state.previewUrl) return state.previewUrl;
+  const exactRendered = state.rendered.find((item) => {
+    const sameBackground = !backgroundItem || item.backgroundItem?.id === backgroundItem.id;
+    const sameProduct = !productItem || item.file === productItem.file;
+    return sameBackground && sameProduct;
+  });
+  return exactRendered?.url || state.rendered[state.selectedRenderedIndex]?.url || state.rendered[0]?.url || "";
+}
+
+function setLivePreviewLoading(loading) {
+  document.querySelector(".placement-canvas")?.classList.toggle("placement-canvas--loading", loading);
+}
+
+function placementBackgroundMarkup(backgroundItem, fit) {
+  if (fit === "blurCover") {
+    return `<img class="placement-bg placement-bg--blur" src="${backgroundItem.url}" alt="" draggable="false" />
+            <img class="placement-bg placement-bg--contain" src="${backgroundItem.url}" alt="${escapeHtml(backgroundItem.name)}" draggable="false" />`;
+  }
+  return `<img class="placement-bg placement-bg--${fit === "contain" ? "contain" : "cover"}" src="${backgroundItem.url}" alt="${escapeHtml(backgroundItem.name)}" draggable="false" />`;
 }
 
 async function renderAll() {
@@ -987,8 +1085,8 @@ async function renderAll() {
   releaseCanvas(renderCanvas);
   state.processing = false;
   state.selectedRenderedIndex = state.rendered.length ? 0 : -1;
-  if (state.rendered[0]) paintPreview(state.rendered[0].url);
   updateUi("已生成，准备打包下载");
+  renderPreview();
 }
 
 async function downloadZip() {
@@ -1193,6 +1291,30 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function readBoundedNumberInput(input, { integer = false } = {}) {
+  const raw = input.value.trim();
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const isIncomplete = raw === "" || raw === "-" || raw === "+" || raw === "." || raw === "-." || raw === "+.";
+  if (isIncomplete) {
+    input.classList.remove("number-control--invalid");
+    input.setCustomValidity("");
+    return null;
+  }
+  const value = Number(raw);
+  const valid = Number.isFinite(value) && value >= min && value <= max && (!integer || Number.isInteger(value));
+  input.classList.toggle("number-control--invalid", !valid);
+  input.setCustomValidity(valid ? "" : `请输入 ${min} 到 ${max} 范围内的${integer ? "整数" : "数字"}`);
+  return valid ? value : null;
+}
+
+function clearNumberInputState(...inputs) {
+  inputs.forEach((input) => {
+    input?.classList.remove("number-control--invalid");
+    input?.setCustomValidity("");
+  });
+}
+
 function numberOr(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -1239,6 +1361,10 @@ function createDefaultPlacement(shape = "circle") {
     y: 50,
     shape: productShapes[shape] ? shape : "circle",
     radius: 50,
+    circleWidth: 100,
+    circleHeight: 100,
+    stretchX: 100,
+    stretchY: 100,
     sideLength: 50,
     sides: 6,
     rectLength: 120,
@@ -1247,6 +1373,8 @@ function createDefaultPlacement(shape = "circle") {
     shortAxis: 80,
     fixedScale: 100,
     rotation: 0,
+    depthTilt: 0,
+    horizontalTilt: 0,
     fineTune: false,
     tuneLineColor: "black",
     quadCorners: null,
@@ -1258,18 +1386,45 @@ const PLACEMENT_DIMENSION_SCALE = 0.68;
 const PLACEMENT_QUAD_LIMIT = 120;
 const PLACEMENT_QUAD_CORNERS = ["tl", "tr", "br", "bl"];
 
+function roundPlacementBaseDimensions(shape) {
+  return shape === "ellipse" ? { width: 120, height: 80 } : { width: 100, height: 100 };
+}
+
 function normalizePlacementLayout(layout) {
+  const source = layout || {};
   const base = { ...createDefaultPlacement(), ...(layout || {}) };
   const legacyDiameter = numberOr(base.width ?? base.scale, 100);
   base.radius = clamp(numberOr(base.radius ?? legacyDiameter / 2, 50), 0, 90);
+  const circleDiameter = base.radius * 2;
+  base.circleWidth = clamp(numberOr(base.circleWidth ?? base.circleLongAxis ?? base.width, circleDiameter), 0, 180);
+  base.circleHeight = clamp(numberOr(base.circleHeight ?? base.circleShortAxis ?? base.height, circleDiameter), 0, 180);
   base.sides = Math.round(clamp(numberOr(base.sides, 6), 3, 12));
   base.sideLength = clamp(numberOr(base.sideLength ?? legacyDiameter * Math.sin(Math.PI / base.sides), 50), 0, 140);
   base.rectLength = clamp(numberOr(base.rectLength ?? base.width, 120), 0, 180);
   base.rectWidth = clamp(numberOr(base.rectWidth ?? base.height, 80), 0, 180);
   base.longAxis = clamp(numberOr(base.longAxis ?? base.width, 120), 0, 180);
   base.shortAxis = clamp(numberOr(base.shortAxis ?? base.height, 80), 0, 180);
+  const roundBase = roundPlacementBaseDimensions(base.shape);
+  const legacyRoundWidth =
+    base.shape === "ellipse"
+      ? numberOr(source.width ?? source.longAxis, base.longAxis)
+      : numberOr(source.width ?? source.circleWidth ?? source.circleLongAxis, base.circleWidth);
+  const legacyRoundHeight =
+    base.shape === "ellipse"
+      ? numberOr(source.height ?? source.shortAxis, base.shortAxis)
+      : numberOr(source.height ?? source.circleHeight ?? source.circleShortAxis, base.circleHeight);
+  base.stretchX = clamp(Math.round(numberOr(source.stretchX ?? source.roundScaleX ?? source.scaleX, (legacyRoundWidth / roundBase.width) * 100) * 10) / 10, 0, 220);
+  base.stretchY = clamp(Math.round(numberOr(source.stretchY ?? source.roundScaleY ?? source.scaleY, (legacyRoundHeight / roundBase.height) * 100) * 10) / 10, 0, 220);
+  base.circleWidth = clamp(roundBase.width * (base.stretchX / 100), 0, 220);
+  base.circleHeight = clamp(roundBase.height * (base.stretchY / 100), 0, 220);
+  if (base.shape === "ellipse") {
+    base.longAxis = base.circleWidth;
+    base.shortAxis = base.circleHeight;
+  }
   base.fixedScale = clamp(numberOr(base.fixedScale, 100), 0, 180);
   base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
+  base.depthTilt = clamp(Math.round(numberOr(base.depthTilt, 0) * 10) / 10, -75, 75);
+  base.horizontalTilt = clamp(Math.round(numberOr(base.horizontalTilt ?? base.pitchTilt, 0) * 10) / 10, -75, 75);
   base.fineTune = Boolean(base.fineTune) && (base.shape === "rectangle" || base.shape === "polygon");
   base.tuneLineColor = normalizeTuneLineColor(base.tuneLineColor);
   base.quadCorners =
@@ -1286,15 +1441,17 @@ function normalizePlacementLayout(layout) {
           height: clamp((base.sideLength / Math.sin(Math.PI / base.sides)) * PLACEMENT_DIMENSION_SCALE, 0, 94),
         })
       : null;
-  if (base.shortAxis > base.longAxis) [base.longAxis, base.shortAxis] = [base.shortAxis, base.longAxis];
   return base;
 }
 
 function placementRawDimensions(layout) {
   const normalized = normalizePlacementLayout(layout);
-  if (normalized.shape === "circle") {
-    const diameter = normalized.radius * 2;
-    return { width: diameter, height: diameter };
+  if (isRoundPlacementShape(normalized)) {
+    const roundBase = roundPlacementBaseDimensions(normalized.shape);
+    return {
+      width: roundBase.width * (normalized.stretchX / 100),
+      height: roundBase.height * (normalized.stretchY / 100),
+    };
   }
   if (normalized.shape === "polygon") {
     const diameter = normalized.sideLength / Math.sin(Math.PI / normalized.sides);
@@ -1382,34 +1539,51 @@ function placementPolygonPoints(layout) {
   return normalizePlacementPolygonPoints(normalized.polygonPoints, normalized.sides, placementDimensions(normalized));
 }
 
-function placementRenderRadius(layout) {
+function placementRenderMetrics(layout, scaleMultiplier = 1) {
   const normalized = normalizePlacementLayout(layout);
-  const raw = placementRawDimensions(normalized);
-  return 0.34 * (Math.max(raw.width, raw.height) / 100);
+  const dimensions = placementDimensions(normalized, scaleMultiplier);
+  const maxDimension = Math.max(dimensions.width, dimensions.height);
+  if (maxDimension <= 0) {
+    return {
+      radius: 0,
+      shapeModel: { shape: normalized.shape, sides: normalized.sides, x: 1, y: 1 },
+    };
+  }
+  return {
+    radius: maxDimension / 200,
+    shapeModel: {
+      shape: normalized.shape,
+      sides: normalized.sides,
+      x: clamp(dimensions.width / maxDimension, 0, 1),
+      y: clamp(dimensions.height / maxDimension, 0, 1),
+    },
+  };
 }
 
-function placementShapeRenderModel(layout) {
-  const normalized = normalizePlacementLayout(layout);
-  const raw = placementRawDimensions(normalized);
-  const maxSide = Math.max(raw.width, raw.height, 1);
-  return {
-    shape: normalized.shape,
-    sides: normalized.sides,
-    x: clamp(raw.width / maxSide, 0, 1),
-    y: clamp(raw.height / maxSide, 0, 1),
-  };
+function placementRenderRadius(layout, scaleMultiplier = 1) {
+  return placementRenderMetrics(layout, scaleMultiplier).radius;
+}
+
+function placementShapeRenderModel(layout, scaleMultiplier = 1) {
+  return placementRenderMetrics(layout, scaleMultiplier).shapeModel;
 }
 
 function placementControlModel(layout) {
   const normalized = normalizePlacementLayout(layout);
-  if (normalized.shape === "circle") {
+  if (isRoundPlacementShape(normalized)) {
     return {
-      primaryLabel: "半径",
-      primaryKey: "radius",
-      primaryValue: normalized.radius,
+      primaryLabel: "横向伸缩%",
+      primaryKey: "stretchX",
+      primaryValue: Math.round(normalized.stretchX * 10) / 10,
       primaryMin: 0,
-      primaryMax: 90,
-      primaryStep: 1,
+      primaryMax: 220,
+      primaryStep: 0.1,
+      secondaryLabel: "纵向伸缩%",
+      secondaryKey: "stretchY",
+      secondaryValue: Math.round(normalized.stretchY * 10) / 10,
+      secondaryMin: 0,
+      secondaryMax: 220,
+      secondaryStep: 0.1,
     };
   }
   if (normalized.shape === "polygon") {
@@ -1440,17 +1614,17 @@ function placementControlModel(layout) {
     };
   }
   return {
-    primaryLabel: "长边",
-    primaryKey: "longAxis",
-    primaryValue: normalized.longAxis,
+    primaryLabel: "横向伸缩%",
+    primaryKey: "stretchX",
+    primaryValue: Math.round(normalized.stretchX),
     primaryMin: 0,
-    primaryMax: 180,
+    primaryMax: 220,
     primaryStep: 1,
-    secondaryLabel: "短边",
-    secondaryKey: "shortAxis",
-    secondaryValue: normalized.shortAxis,
+    secondaryLabel: "纵向伸缩%",
+    secondaryKey: "stretchY",
+    secondaryValue: Math.round(normalized.stretchY),
     secondaryMin: 0,
-    secondaryMax: 180,
+    secondaryMax: 220,
     secondaryStep: 1,
   };
 }
@@ -1461,15 +1635,20 @@ function convertPlacementShape(layout, nextShape) {
   const long = Math.max(raw.width, raw.height);
   const short = Math.min(raw.width, raw.height);
   const sides = normalized.sides;
+  const roundBase = roundPlacementBaseDimensions(nextShape);
   return normalizePlacementLayout({
     ...normalized,
     shape: nextShape,
     radius: short / 2,
+    circleWidth: raw.width,
+    circleHeight: raw.height,
+    stretchX: (raw.width / roundBase.width) * 100,
+    stretchY: (raw.height / roundBase.height) * 100,
     sideLength: long * Math.sin(Math.PI / sides),
     rectLength: long,
     rectWidth: short,
-    longAxis: long,
-    shortAxis: short,
+    longAxis: raw.width,
+    shortAxis: raw.height,
   });
 }
 
@@ -1520,6 +1699,26 @@ function placementRotationRad(layout) {
   return (normalizePlacementLayout(layout).rotation * Math.PI) / 180;
 }
 
+function isRoundPlacementShape(layout) {
+  const shape = normalizePlacementLayout(layout).shape;
+  return shape === "circle" || shape === "ellipse";
+}
+
+function placementDepthTiltView(layout) {
+  const normalized = normalizePlacementLayout(layout);
+  if (!isRoundPlacementShape(normalized)) return { x: 1, y: 1, yaw: 0, pitch: 0 };
+  const yawTilt = normalized.depthTilt;
+  const pitchTilt = normalized.horizontalTilt;
+  const yawScale = clamp(Math.cos((Math.abs(yawTilt) * Math.PI) / 180), 0.24, 1);
+  const pitchScale = clamp(Math.cos((Math.abs(pitchTilt) * Math.PI) / 180), 0.24, 1);
+  return {
+    x: yawScale,
+    y: pitchScale,
+    yaw: -yawTilt / 75,
+    pitch: -pitchTilt / 75,
+  };
+}
+
 function normalizeTuneLineColor(value) {
   if (value === "red" || value === "#f04438" || value === "#ff0000") return "red";
   return value === "white" || value === "#fff" || value === "#ffffff" ? "white" : "black";
@@ -1566,6 +1765,15 @@ function placementPolygonHandlesMarkup(layout, dimensions) {
     .join("");
 }
 
+function roundPlacementResizeHandlesMarkup() {
+  return `
+    <button class="placement-resize-handle placement-resize-handle--x" type="button" data-resize-axis="x" data-resize-side="left" aria-label="横向伸缩"></button>
+    <button class="placement-resize-handle placement-resize-handle--x" type="button" data-resize-axis="x" data-resize-side="right" aria-label="横向伸缩"></button>
+    <button class="placement-resize-handle placement-resize-handle--y" type="button" data-resize-axis="y" data-resize-side="top" aria-label="纵向伸缩"></button>
+    <button class="placement-resize-handle placement-resize-handle--y" type="button" data-resize-axis="y" data-resize-side="bottom" aria-label="纵向伸缩"></button>
+  `;
+}
+
 function fitPlacementRectangleCorner(layout, corner, point) {
   const normalized = normalizePlacementLayout(layout);
   const localPoint = localPointFromCanvasPercent(normalized, point);
@@ -1600,6 +1808,23 @@ function fitPlacementPolygonPoint(layout, index, point) {
     ...normalized,
     fineTune: true,
     polygonPoints: nextPoints,
+  });
+}
+
+function fitRoundPlacementStretch(layout, axis, point) {
+  const normalized = normalizePlacementLayout(layout);
+  if (!isRoundPlacementShape(normalized)) return normalized;
+  const localPoint = localPointFromCanvasPercent(normalized, point);
+  const roundBase = roundPlacementBaseDimensions(normalized.shape);
+  const depthTiltView = placementDepthTiltView(normalized);
+  const visualScale = axis === "x" ? depthTiltView.x : depthTiltView.y;
+  const baseSize = axis === "x" ? roundBase.width : roundBase.height;
+  const distance = Math.abs(axis === "x" ? localPoint.x : localPoint.y);
+  const placementSize = (distance * 2) / Math.max(0.001, visualScale);
+  const nextStretch = clamp(Math.round((placementSize / (baseSize * PLACEMENT_DIMENSION_SCALE)) * 1000) / 10, 0, 220);
+  return normalizePlacementLayout({
+    ...normalized,
+    [axis === "x" ? "stretchX" : "stretchY"]: nextStretch,
   });
 }
 
@@ -1869,7 +2094,7 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
   const normalized = normalizePlacementLayout(layout);
   const points = placementQuadCanvasPoints(normalized, size);
   const bounds = quadBounds(points);
-  const sourceRect = coverSourceRect(image, quadTextureAspect(normalized));
+  const sourceRect = getImageContentRect(image);
   const rotation = placementRotationRad(normalized);
   const offsetX = Math.cos(rotation) * depth * 0.98 - Math.sin(rotation) * depth * 0.72;
   const offsetY = Math.sin(rotation) * depth * 0.98 + Math.cos(rotation) * depth * 0.72;
@@ -1959,7 +2184,7 @@ function drawCustomPolygonProductView(ctx, image, size, layout, depth, shadow, s
   const bounds = pointArrayBounds(points);
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const height = Math.max(1, bounds.maxY - bounds.minY);
-  const sourceRect = coverSourceRect(image, width / height);
+  const sourceRect = getImageContentRect(image);
   const rotation = placementRotationRad(normalized);
   const offsetX = Math.cos(rotation) * depth * 0.98 - Math.sin(rotation) * depth * 0.72;
   const offsetY = Math.sin(rotation) * depth * 0.98 + Math.cos(rotation) * depth * 0.72;
@@ -2131,10 +2356,12 @@ function placementShapeMarkup(layout, view, options = {}) {
   const fineTuneActive = Boolean(options.fineTuneActive) && (layout.shape === "rectangle" || layout.shape === "polygon");
   const cornerTune = fineTuneActive && layout.shape === "rectangle";
   const polygonTune = fineTuneActive && layout.shape === "polygon";
+  const roundResize = Boolean(options.draggable) && isRoundPlacementShape(layout);
   const classes = [
     "placement-stage-shape",
     `placement-stage-shape--${layout.shape}`,
     options.draggable ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed",
+    roundResize ? "placement-stage-shape--resizable" : "",
     fineTuneActive ? "placement-stage-shape--fine-tune" : "",
   ].join(" ");
   const content =
@@ -2144,7 +2371,7 @@ function placementShapeMarkup(layout, view, options = {}) {
         ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${placementQuadSvgPoints(layout, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(layout, dimensions)}`
         : layout.shape === "rectangle"
           ? `<svg class="placement-outline-svg placement-outline-svg--rectangle" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${rectangleSvgPoints()}"></polygon></svg>`
-        : `<span></span>`;
+        : `<span></span>${roundResize ? roundPlacementResizeHandlesMarkup() : ""}`;
   return `
     <div
       class="${classes}"
@@ -2259,9 +2486,10 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
   const shine = options.shine / 100;
   const layoutMode = getBackgroundLayoutMode(backgroundItem);
   const placementLayout = placementLayoutForBackground(backgroundItem);
-  const shapeModel = placementShapeRenderModel(placementLayout);
-  const renderShapeModel = { ...shapeModel, fixedRotation: layoutMode !== "free" };
-  const productScale = layoutMode === "free" ? 1 : (placementRenderRadius(placementLayout) / 0.34) * (placementLayout.fixedScale / 100);
+  const fixedScaleMultiplier = layoutMode === "free" ? 1 : placementLayout.fixedScale / 100;
+  const renderMetrics = placementRenderMetrics(placementLayout, fixedScaleMultiplier);
+  const renderShapeModel = { ...renderMetrics.shapeModel, fixedRotation: layoutMode !== "free" };
+  const productScale = layoutMode === "free" ? 1 : renderMetrics.radius / 0.34;
 
   if (layoutMode === "free") {
     if (placementLayout.shape === "rectangle" && placementLayout.fineTune) {
@@ -2269,9 +2497,10 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
     } else if (placementLayout.shape === "polygon" && placementLayout.fineTune) {
       drawCustomPolygonProductView(ctx, source, size, placementLayout, depth * 1.16, shadow, shine, options.material);
     } else {
-      const radius = placementRenderRadius(placementLayout);
+      const radius = renderMetrics.radius;
       if (radius > 0) {
         const viewDepth = 1.16;
+        const depthTiltView = placementDepthTiltView(placementLayout);
         drawBadgeView(
           ctx,
           source,
@@ -2281,9 +2510,10 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
             cy: placementLayout.y / 100,
             r: radius,
             depth: viewDepth,
-            x: 1,
-            y: 1,
-            yaw: 0,
+            x: depthTiltView.x,
+            y: depthTiltView.y,
+            yaw: depthTiltView.yaw,
+            pitch: depthTiltView.pitch,
             rot: placementRotationRad(placementLayout),
             primary: true,
           },
@@ -2703,6 +2933,7 @@ function drawBadgeView(ctx, source, size, view, depth, shadow, shine, material, 
     xScale: view.x,
     yScale: view.y,
     yaw: view.yaw,
+    pitch: view.pitch || 0,
     rotation: shapeModel.fixedRotation ? 0 : view.rot,
     shadow,
     shine,
@@ -2821,6 +3052,9 @@ function withProductTransform(ctx, view, fn) {
 function drawCastShadow(ctx, view) {
   const { cx, cy, radius, depth, shadow, xScale, yScale, yaw, shapeX, shapeY } = view;
   if (shadow <= 0) return;
+  const yawValue = Number.isFinite(yaw) ? yaw : 0;
+  const pitch = Number.isFinite(view.pitch) ? view.pitch : 0;
+  const yawDirection = yawValue < -0.01 ? -1 : 1;
   const widthScale = Number.isFinite(shapeX) ? shapeX : 1;
   const heightScale = Number.isFinite(shapeY) ? shapeY : 1;
   ctx.save();
@@ -2829,8 +3063,8 @@ function drawCastShadow(ctx, view) {
   ctx.fillStyle = "rgba(32,38,36,0.72)";
   ctx.beginPath();
   ctx.ellipse(
-    cx + depth * (1.1 + yaw * 0.22),
-    cy + radius * 0.64 + depth * 0.46,
+    cx + depth * yawDirection * (1.1 + Math.abs(yawValue) * 0.22),
+    cy + radius * (0.64 + Math.max(0, pitch) * 0.08 - Math.max(0, -pitch) * 0.12) + depth * (0.46 + Math.abs(pitch) * 0.18),
     radius * (0.86 * xScale * widthScale + 0.12),
     radius * (0.16 * yScale * heightScale) + depth * 0.42,
     view.rotation,
@@ -2867,12 +3101,15 @@ function drawReflection(ctx, view) {
 function drawExtrudedEdge(ctx, view) {
   const { radius, depth, yaw, material, edgeColor } = view;
   if (depth <= 0.5) return;
+  const yawValue = Number.isFinite(yaw) ? yaw : 0;
+  const pitch = Number.isFinite(view.pitch) ? view.pitch : 0;
+  const yawDirection = yawValue < -0.01 ? -1 : 1;
   const base = hexToRgb(edgeColor || "#8f9188");
   const layers = Math.max(38, Math.round(depth * 1.55));
   for (let i = layers; i >= 0; i -= 1) {
     const t = i / layers;
-    const offsetX = depth * t * (1.02 + Math.abs(yaw) * 0.78);
-    const offsetY = depth * t * 0.76;
+    const offsetX = depth * t * yawDirection * (1.02 + Math.abs(yawValue) * 0.78);
+    const offsetY = depth * t * (0.76 + Math.abs(pitch) * 0.36) * (pitch < 0 ? -0.72 : 1);
     const alpha = material === "acrylic" ? 0.7 + 0.28 * (1 - t) : 0.76 + 0.2 * (1 - t);
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -2922,10 +3159,9 @@ function drawFace(ctx, image, view) {
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
 
-    const coverSize = isRoundProductShape(view) ? 2.04 : 2;
-    const targetWidth = rx * coverSize;
-    const targetHeight = ry * coverSize;
-    const sourceRect = coverSourceRect(image, targetWidth / Math.max(1, targetHeight));
+    const targetWidth = rx * 2;
+    const targetHeight = ry * 2;
+    const sourceRect = getImageContentRect(image);
     ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
     ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, -targetWidth / 2, -targetHeight / 2, targetWidth, targetHeight);
     ctx.filter = "none";
@@ -3449,7 +3685,7 @@ function paintNoSelectedProductsStage() {
   renderIcons();
 }
 
-function paintPlacementStage(backgroundItem) {
+function paintPlacementStage(backgroundItem, options = {}) {
   if (!hasSelectedProductShape()) {
     paintShapeRequiredStage();
     return;
@@ -3461,11 +3697,13 @@ function paintPlacementStage(backgroundItem) {
   const fit = state.options.backgroundFit;
   const controls = placementControlModel(layout);
   const shapeLabel = getSelectedProductShapeLabel();
+  const depthTiltView = placementDepthTiltView(layout);
   const views =
     layoutMode === "free"
-      ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
+      ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout), ...depthTiltView }]
       : getFixedLayoutPlaceholderViews(layoutMode);
   const fixedScaleMultiplier = layoutMode === "free" ? 1 : layout.fixedScale / 100;
+  const depthTiltEnabled = layoutMode === "free" && isRoundPlacementShape(layout);
   const fineTuneEnabled = layoutMode === "free" && (layout.shape === "rectangle" || layout.shape === "polygon");
   const fineTuneActive = fineTuneEnabled && layout.fineTune;
   const lockPrimary = fineTuneActive && (layout.shape === "rectangle" || layout.shape === "polygon");
@@ -3474,15 +3712,12 @@ function paintPlacementStage(backgroundItem) {
   stage.style.setProperty("--stage-bg", "#f4f5f2");
   stage.classList.remove("stage--checker");
   stage.classList.add("stage--placement");
+  const livePreviewUrl = options.livePreviewUrl || "";
   stage.innerHTML = `
     <div class="placement-workspace">
-      <div class="placement-canvas" data-background-id="${backgroundItem.id}">
-        ${
-          fit === "blurCover"
-            ? `<img class="placement-bg placement-bg--blur" src="${backgroundItem.url}" alt="" draggable="false" />
-               <img class="placement-bg placement-bg--contain" src="${backgroundItem.url}" alt="${escapeHtml(backgroundItem.name)}" draggable="false" />`
-            : `<img class="placement-bg placement-bg--${fit === "contain" ? "contain" : "cover"}" src="${backgroundItem.url}" alt="${escapeHtml(backgroundItem.name)}" draggable="false" />`
-        }
+      <div class="placement-canvas ${livePreviewUrl ? "placement-canvas--live" : ""}" data-background-id="${backgroundItem.id}">
+        ${placementBackgroundMarkup(backgroundItem, fit)}
+        ${livePreviewUrl ? `<img class="placement-live-preview" src="${livePreviewUrl}" alt="实时 3D 预览" draggable="false" />` : ""}
         ${views.map((view) => placementShapeMarkup(layout, view, { draggable: layoutMode === "free", scaleMultiplier: fixedScaleMultiplier, fineTuneActive })).join("")}
         ${state.options.badge ? badgeMarkerMarkup() : ""}
       </div>
@@ -3511,6 +3746,14 @@ function paintPlacementStage(backgroundItem) {
           <span>旋转角度</span>
           <input id="placementRotation" class="number-control" type="number" min="-180" max="180" step="0.1" value="${layout.rotation}" />
         </label>
+        <label class="placement-control ${depthTiltEnabled ? "" : "field--hidden"}">
+          <span>内外转角</span>
+          <input id="placementDepthTilt" class="number-control" type="number" min="-75" max="75" step="0.1" value="${layout.depthTilt}" />
+        </label>
+        <label class="placement-control ${depthTiltEnabled ? "" : "field--hidden"}">
+          <span>水平轴旋转</span>
+          <input id="placementHorizontalTilt" class="number-control" type="number" min="-75" max="75" step="0.1" value="${layout.horizontalTilt}" />
+        </label>
         <label class="placement-control placement-control--toggle ${fineTuneEnabled ? "" : "field--hidden"}">
           <span>${layout.shape === "polygon" ? "顶点微调" : "四角微调"}</span>
           <input id="placementFineTune" type="checkbox" ${layout.fineTune ? "checked" : ""} />
@@ -3538,21 +3781,24 @@ function bindPlacementStage(backgroundItem) {
   const secondaryInput = stage.querySelector("#placementSecondary");
   const sidesInput = stage.querySelector("#placementSides");
   const rotationInput = stage.querySelector("#placementRotation");
+  const depthTiltInput = stage.querySelector("#placementDepthTilt");
+  const horizontalTiltInput = stage.querySelector("#placementHorizontalTilt");
   const fixedScaleInput = stage.querySelector("#placementFixedScale");
   const fineTuneInput = stage.querySelector("#placementFineTune");
   const tuneLineColorInput = stage.querySelector("#placementTuneLineColor");
   const fixedScaleLabel = stage.querySelector("[data-placement-value='fixedScale']");
   const badgeMarker = stage.querySelector(".badge-marker");
   const layoutMode = getBackgroundLayoutMode(backgroundItem);
-  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !fixedScaleInput || !fineTuneInput || !tuneLineColorInput || !fixedScaleLabel) return;
+  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !depthTiltInput || !horizontalTiltInput || !fixedScaleInput || !fineTuneInput || !tuneLineColorInput || !fixedScaleLabel) return;
 
   const updateShapeElement = () => {
     const layout = placementLayoutForBackground(backgroundItem);
     const controls = placementControlModel(layout);
     backgroundItem.freeLayout = layout;
+    const depthTiltView = placementDepthTiltView(layout);
     const views =
       layoutMode === "free"
-        ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
+        ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout), ...depthTiltView }]
         : getFixedLayoutPlaceholderViews(layoutMode);
     const fixedScaleMultiplier = layoutMode === "free" ? 1 : layout.fixedScale / 100;
     shapes.forEach((shape, index) => {
@@ -3560,7 +3806,8 @@ function bindPlacementStage(backgroundItem) {
       const dimensions = placementDimensions(layout, fixedScaleMultiplier);
       const scale = view.r / 0.34;
       const fineTuneActive = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon");
-      shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"} ${fineTuneActive ? "placement-stage-shape--fine-tune" : ""}`;
+      const roundResize = layoutMode === "free" && isRoundPlacementShape(layout);
+      shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"} ${roundResize ? "placement-stage-shape--resizable" : ""} ${fineTuneActive ? "placement-stage-shape--fine-tune" : ""}`;
       shape.style.left = `${(view.cx * 100).toFixed(3)}%`;
       shape.style.top = `${(view.cy * 100).toFixed(3)}%`;
       shape.style.width = `${clamp(dimensions.width * scale * (view.x ?? 1), 0, 98)}%`;
@@ -3591,6 +3838,8 @@ function bindPlacementStage(backgroundItem) {
     secondaryInput.value = controls.secondaryValue || 0;
     sidesInput.value = layout.sides;
     rotationInput.value = layout.rotation;
+    depthTiltInput.value = layout.depthTilt;
+    horizontalTiltInput.value = layout.horizontalTilt;
     fixedScaleInput.value = layout.fixedScale;
     fineTuneInput.checked = layout.fineTune;
     tuneLineColorInput.value = layout.tuneLineColor;
@@ -3601,11 +3850,13 @@ function bindPlacementStage(backgroundItem) {
     primaryInput.disabled = lockPrimary;
     secondaryInput.disabled = lockSecondary;
     sidesInput.disabled = lockSides;
+    clearNumberInputState(primaryInput, secondaryInput, sidesInput, rotationInput, depthTiltInput, horizontalTiltInput);
   };
 
   const savePlacementChange = (message) => {
     clearRendered();
     updateUi(message);
+    scheduleLivePreview();
   };
 
   const pointerToCanvasPercent = (event) => {
@@ -3623,6 +3874,45 @@ function bindPlacementStage(backgroundItem) {
   bindBadgeMarkerDrag(canvas, badgeMarker);
 
   if (layoutMode === "free") {
+    const resizeHandles = Array.from(stage.querySelectorAll(".placement-resize-handle"));
+    resizeHandles.forEach((handle) => {
+      let isDraggingResize = false;
+      const axis = handle.dataset.resizeAxis;
+      const moveResize = (event) => {
+        const point = pointerToCanvasPercent(event);
+        const layout = placementLayoutForBackground(backgroundItem);
+        backgroundItem.freeLayout = fitRoundPlacementStretch(layout, axis, point);
+        updateShapeElement();
+        clearRendered();
+        scheduleLivePreview();
+      };
+
+      handle.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        isDraggingResize = true;
+        handle.setPointerCapture(event.pointerId);
+        moveResize(event);
+      });
+      handle.addEventListener("pointermove", (event) => {
+        if (!isDraggingResize) return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveResize(event);
+      });
+      handle.addEventListener("pointerup", (event) => {
+        if (!isDraggingResize) return;
+        event.preventDefault();
+        event.stopPropagation();
+        isDraggingResize = false;
+        handle.releasePointerCapture(event.pointerId);
+        savePlacementChange(axis === "x" ? "横向伸缩已更新，可以重新生成" : "纵向伸缩已更新，可以重新生成");
+      });
+      handle.addEventListener("pointercancel", () => {
+        isDraggingResize = false;
+      });
+    });
+
     const cornerHandles = Array.from(stage.querySelectorAll(".placement-corner-handle"));
     cornerHandles.forEach((handle) => {
       let isDraggingCorner = false;
@@ -3673,7 +3963,7 @@ function bindPlacementStage(backgroundItem) {
     };
 
     canvas.addEventListener("pointerdown", (event) => {
-      if (event.target.closest(".placement-corner-handle")) return;
+      if (event.target.closest(".placement-corner-handle, .placement-resize-handle")) return;
       event.preventDefault();
       isDragging = true;
       canvas.setPointerCapture(event.pointerId);
@@ -3700,6 +3990,7 @@ function bindPlacementStage(backgroundItem) {
     clearRendered();
     updateUi(event.target.checked ? (layout.shape === "polygon" ? "顶点微调已开启，边长和边数已锁定" : "四角微调已开启，长和宽已锁定") : "微调已关闭");
     paintPlacementStage(backgroundItem);
+    scheduleLivePreview();
   });
 
   tuneLineColorInput.addEventListener("change", (event) => {
@@ -3711,7 +4002,8 @@ function bindPlacementStage(backgroundItem) {
   });
 
   primaryInput.addEventListener("input", (event) => {
-    const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));
+    const value = readBoundedNumberInput(event.target);
+    if (value === null) return;
     const layout = placementLayoutForBackground(backgroundItem);
     if (layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon")) return;
     const controls = placementControlModel(layout);
@@ -3725,7 +4017,8 @@ function bindPlacementStage(backgroundItem) {
     if (layoutMode === "free" && layout.fineTune && layout.shape === "rectangle") return;
     const controls = placementControlModel(layout);
     if (!controls.secondaryKey) return;
-    const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));
+    const value = readBoundedNumberInput(event.target);
+    if (value === null) return;
     backgroundItem.freeLayout = { ...layout, [controls.secondaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners };
     updateShapeElement();
     savePlacementChange(`${controls.secondaryLabel}已更新，可以重新生成`);
@@ -3734,16 +4027,40 @@ function bindPlacementStage(backgroundItem) {
   sidesInput.addEventListener("input", (event) => {
     const layout = placementLayoutForBackground(backgroundItem);
     if (layoutMode === "free" && layout.fineTune && layout.shape === "polygon") return;
-    backgroundItem.freeLayout = { ...layout, sides: clamp(Number(event.target.value), 3, 12), polygonPoints: null };
+    const value = readBoundedNumberInput(event.target, { integer: true });
+    if (value === null) return;
+    backgroundItem.freeLayout = { ...layout, sides: value, polygonPoints: null };
     updateShapeElement();
     savePlacementChange("正多边形边数已更新，可以重新生成");
   });
 
   rotationInput.addEventListener("input", (event) => {
     const layout = placementLayoutForBackground(backgroundItem);
-    backgroundItem.freeLayout = { ...layout, rotation: clamp(Math.round(Number(event.target.value) * 10) / 10, -180, 180) };
+    const value = readBoundedNumberInput(event.target);
+    if (value === null) return;
+    backgroundItem.freeLayout = { ...layout, rotation: Math.round(value * 10) / 10 };
     updateShapeElement();
     savePlacementChange("旋转角度已更新，可以重新生成");
+  });
+
+  depthTiltInput.addEventListener("input", (event) => {
+    const layout = placementLayoutForBackground(backgroundItem);
+    if (!isRoundPlacementShape(layout)) return;
+    const value = readBoundedNumberInput(event.target);
+    if (value === null) return;
+    backgroundItem.freeLayout = { ...layout, depthTilt: Math.round(value * 10) / 10 };
+    updateShapeElement();
+    savePlacementChange("内外转角已更新，可以重新生成");
+  });
+
+  horizontalTiltInput.addEventListener("input", (event) => {
+    const layout = placementLayoutForBackground(backgroundItem);
+    if (!isRoundPlacementShape(layout)) return;
+    const value = readBoundedNumberInput(event.target);
+    if (value === null) return;
+    backgroundItem.freeLayout = { ...layout, horizontalTilt: Math.round(value * 10) / 10 };
+    updateShapeElement();
+    savePlacementChange("水平轴旋转已更新，可以重新生成");
   });
 
   fixedScaleInput.addEventListener("input", (event) => {
@@ -3792,8 +4109,7 @@ function paintFileList(doneCount) {
         if (locked) return;
         const index = Number(button.dataset.renderedIndex);
         state.selectedRenderedIndex = index;
-        paintPreview(state.rendered[index].url);
-        paintFileList(state.rendered.length);
+        updateUi(`已选中 ${state.rendered[index].name}，中间工作区仍保持实时编辑预览`);
       });
     });
     return;
@@ -3803,6 +4119,11 @@ function paintFileList(doneCount) {
 }
 
 function revokePreview() {
+  livePreviewRequestId += 1;
+  if (livePreviewTimer) {
+    clearTimeout(livePreviewTimer);
+    livePreviewTimer = null;
+  }
   if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
   state.previewUrl = "";
 }
