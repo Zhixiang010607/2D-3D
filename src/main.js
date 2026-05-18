@@ -937,8 +937,7 @@ async function renderPreview({ forceProductPreview = false } = {}) {
   }
   const focusedBackground = getFocusedBackground();
   if (focusedBackground) {
-    paintPlacementStage(focusedBackground, { livePreviewUrl: getLivePreviewUrl(focusedBackground, previewProductItem) });
-    scheduleLivePreview({ forceProductPreview, immediate: true });
+    paintPlacementStage(focusedBackground);
     return;
   }
   const previewBackground = forceProductPreview ? state.userBackgrounds[0] || getActiveBackgroundPresets()[0] : focusedBackground?.selected ? focusedBackground : getActiveBackgroundPresets()[0];
@@ -953,23 +952,14 @@ async function renderPreview({ forceProductPreview = false } = {}) {
   paintPreview(state.previewUrl, { interactiveBadge: state.options.badge });
 }
 
-function scheduleLivePreview({ forceProductPreview = false, immediate = false } = {}) {
+function scheduleLivePreview() {
   if (livePreviewTimer) {
     clearTimeout(livePreviewTimer);
     livePreviewTimer = null;
   }
-  if (state.processing) return;
-  const requestId = ++livePreviewRequestId;
-  setLivePreviewLoading(true);
-  const run = () => {
-    livePreviewTimer = null;
-    renderLivePreview({ forceProductPreview, requestId });
-  };
-  if (immediate) {
-    run();
-    return;
-  }
-  livePreviewTimer = setTimeout(run, LIVE_PREVIEW_DEBOUNCE_MS);
+  livePreviewRequestId += 1;
+  clearPlacementLivePreview();
+  setLivePreviewLoading(false);
 }
 
 async function renderLivePreview({ forceProductPreview = false, requestId = ++livePreviewRequestId } = {}) {
@@ -1023,6 +1013,13 @@ function setLivePreviewImage(url) {
   }
   image.src = url;
   canvas.classList.add("placement-canvas--live");
+}
+
+function clearPlacementLivePreview() {
+  const canvas = document.querySelector(".placement-canvas");
+  if (!canvas) return;
+  canvas.querySelector(".placement-live-preview")?.remove();
+  canvas.classList.remove("placement-canvas--live", "placement-canvas--loading");
 }
 
 function getLivePreviewUrl(backgroundItem, productItem) {
@@ -1444,6 +1441,7 @@ function createDefaultPlacement(shape = "circle") {
     radius: 50,
     circleWidth: 100,
     circleHeight: 100,
+    roundScale: 100,
     stretchX: 100,
     stretchY: 100,
     sideLength: 50,
@@ -1458,12 +1456,19 @@ function createDefaultPlacement(shape = "circle") {
     tuneLineColor: "black",
     quadCorners: null,
     polygonPoints: null,
+    roundAnchors: null,
+    roundPointCount: 4,
+    roundPoints: null,
+    fineTuneBase: null,
   };
 }
 
 const PLACEMENT_DIMENSION_SCALE = 0.68;
 const PLACEMENT_QUAD_LIMIT = 120;
 const PLACEMENT_QUAD_CORNERS = ["tl", "tr", "br", "bl"];
+const PLACEMENT_ROUND_ANCHORS = ["top", "right", "bottom", "left"];
+const PLACEMENT_ROUND_POINT_MIN = 4;
+const PLACEMENT_ROUND_POINT_MAX = 100;
 
 function roundPlacementBaseDimensions(shape) {
   return shape === "ellipse" ? { width: 120, height: 80 } : { width: 100, height: 100 };
@@ -1502,8 +1507,29 @@ function normalizePlacementLayout(layout) {
   }
   base.fixedScale = clamp(numberOr(base.fixedScale, 100), 0, 180);
   base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
-  base.fineTune = Boolean(base.fineTune) && (base.shape === "rectangle" || base.shape === "polygon");
+  base.fineTune = Boolean(base.fineTune) && (base.shape === "rectangle" || base.shape === "polygon" || base.shape === "circle" || base.shape === "ellipse");
+  base.roundScale = clamp(Math.round(numberOr(source.roundScale ?? source.uniformScale, Math.max(base.stretchX, base.stretchY)) * 10) / 10, 0, 220);
+  if ((base.shape === "circle" || base.shape === "ellipse") && !base.fineTune) {
+    base.stretchX = base.roundScale;
+    base.stretchY = base.roundScale;
+    base.circleWidth = clamp(roundBase.width * (base.roundScale / 100), 0, 220);
+    base.circleHeight = clamp(roundBase.height * (base.roundScale / 100), 0, 220);
+    if (base.shape === "ellipse") {
+      base.longAxis = base.circleWidth;
+      base.shortAxis = base.circleHeight;
+    }
+  }
   base.tuneLineColor = normalizeTuneLineColor(base.tuneLineColor);
+  const roundDimensions = {
+    width: clamp(base.circleWidth * PLACEMENT_DIMENSION_SCALE, 0, 94),
+    height: clamp(base.circleHeight * PLACEMENT_DIMENSION_SCALE, 0, 94),
+  };
+  base.roundPointCount = normalizeRoundPointCount(source.roundPointCount ?? (Array.isArray(source.roundPoints) ? source.roundPoints.length : 4));
+  base.roundPoints =
+    base.shape === "circle" || base.shape === "ellipse"
+      ? normalizePlacementRoundPoints(source.roundPoints ?? legacyRoundAnchorsToPoints(source.roundAnchors, roundDimensions), base.roundPointCount, roundDimensions)
+      : null;
+  base.roundAnchors = null;
   base.quadCorners =
     base.shape === "rectangle"
       ? normalizePlacementQuadCorners(base.quadCorners, {
@@ -1593,9 +1619,71 @@ function normalizePlacementQuadCorners(corners, dimensions) {
   }, {});
 }
 
+function normalizeRoundPointCount(value) {
+  return Math.round(clamp(numberOr(value, 4), PLACEMENT_ROUND_POINT_MIN, PLACEMENT_ROUND_POINT_MAX));
+}
+
+function defaultPlacementRoundAnchors(dimensions) {
+  const halfWidth = dimensions.width / 2;
+  const halfHeight = dimensions.height / 2;
+  return {
+    top: { x: 0, y: -halfHeight },
+    right: { x: halfWidth, y: 0 },
+    bottom: { x: 0, y: halfHeight },
+    left: { x: -halfWidth, y: 0 },
+  };
+}
+
+function legacyRoundAnchorsToPoints(anchors, dimensions) {
+  if (!anchors || typeof anchors !== "object") return null;
+  const fallback = defaultPlacementRoundAnchors(dimensions);
+  const source = anchors;
+  return PLACEMENT_ROUND_ANCHORS.map((key) => {
+    const point = source[key] || fallback[key];
+    return {
+      x: clamp(numberOr(point.x, fallback[key].x), -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+      y: clamp(numberOr(point.y, fallback[key].y), -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+    };
+  });
+}
+
+function defaultPlacementRoundPoints(count, dimensions) {
+  const pointCount = normalizeRoundPointCount(count);
+  const halfWidth = dimensions.width / 2;
+  const halfHeight = dimensions.height / 2;
+  return Array.from({ length: pointCount }, (_, index) => {
+    const angle = -Math.PI / 2 + (index / pointCount) * Math.PI * 2;
+    return {
+      x: Math.cos(angle) * halfWidth,
+      y: Math.sin(angle) * halfHeight,
+    };
+  });
+}
+
+function normalizePlacementRoundPoints(points, count, dimensions) {
+  const pointCount = normalizeRoundPointCount(count);
+  const fallback = defaultPlacementRoundPoints(pointCount, dimensions);
+  const source = Array.isArray(points) && points.length === pointCount ? points : fallback;
+  return fallback.map((fallbackPoint, index) => {
+    const point = source[index] || fallbackPoint;
+    return {
+      x: clamp(numberOr(point.x, fallbackPoint.x), -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+      y: clamp(numberOr(point.y, fallbackPoint.y), -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+    };
+  });
+}
+
 function placementQuadCorners(layout) {
   const normalized = normalizePlacementLayout(layout);
   return normalizePlacementQuadCorners(normalized.quadCorners, placementDimensions(normalized));
+}
+
+function placementRoundPoints(layout) {
+  const normalized = normalizePlacementLayout(layout);
+  if (isRoundPlacementShape(normalized) && !normalized.fineTune) {
+    return defaultPlacementRoundPoints(4, placementDimensions(normalized));
+  }
+  return normalizePlacementRoundPoints(normalized.roundPoints, normalized.roundPointCount, placementDimensions(normalized));
 }
 
 function placementPointToElementPercent(point, dimensions) {
@@ -1603,6 +1691,30 @@ function placementPointToElementPercent(point, dimensions) {
     x: dimensions.width > 0 ? 50 + (point.x / dimensions.width) * 100 : 50,
     y: dimensions.height > 0 ? 50 + (point.y / dimensions.height) * 100 : 50,
   };
+}
+
+function rotatePlacementPoint(point, rotation) {
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  return {
+    x: point.x * cos - point.y * sin,
+    y: point.x * sin + point.y * cos,
+  };
+}
+
+function imageLocalPointFromCanvas(point, center, rotation) {
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const dx = point.x - center.x;
+  const dy = point.y - center.y;
+  return {
+    x: dx * cos + dy * sin,
+    y: -dx * sin + dy * cos,
+  };
+}
+
+function imageLocalBoundsFromCanvasPoints(points, center, rotation) {
+  return pointArrayBounds(points.map((point) => imageLocalPointFromCanvas(point, center, rotation)));
 }
 
 function defaultPlacementPolygonPoints(sides, dimensions) {
@@ -1632,6 +1744,92 @@ function normalizePlacementPolygonPoints(points, sides, dimensions) {
 function placementPolygonPoints(layout) {
   const normalized = normalizePlacementLayout(layout);
   return normalizePlacementPolygonPoints(normalized.polygonPoints, normalized.sides, placementDimensions(normalized));
+}
+
+function fineTuneBaseSnapshot(layout) {
+  const normalized = normalizePlacementLayout(layout);
+  return {
+    shape: normalized.shape,
+    x: normalized.x,
+    y: normalized.y,
+    rotation: normalized.rotation,
+    stretchX: normalized.stretchX,
+    stretchY: normalized.stretchY,
+    circleWidth: normalized.circleWidth,
+    circleHeight: normalized.circleHeight,
+    rectLength: normalized.rectLength,
+    rectWidth: normalized.rectWidth,
+    sideLength: normalized.sideLength,
+    sides: normalized.sides,
+    roundPointCount: normalized.roundPointCount,
+  };
+}
+
+function prepareFineTuneLayout(layout) {
+  const normalized = normalizePlacementLayout(layout);
+  const dimensions = placementDimensions(normalized);
+  const rotation = placementRotationRad(normalized);
+  const next = {
+    ...normalized,
+    fineTune: true,
+    fineTuneBase: fineTuneBaseSnapshot(normalized),
+  };
+  if (normalized.shape === "rectangle") {
+    return normalizePlacementLayout({
+      ...next,
+      rectLength: normalized.rectLength,
+      rectWidth: normalized.rectWidth,
+      quadCorners: Object.fromEntries(PLACEMENT_QUAD_CORNERS.map((corner) => [corner, rotatePlacementPoint(defaultPlacementQuadCorners(dimensions)[corner], rotation)])),
+    });
+  }
+  if (normalized.shape === "polygon") {
+    return normalizePlacementLayout({
+      ...next,
+      sideLength: normalized.sideLength,
+      sides: normalized.sides,
+      polygonPoints: defaultPlacementPolygonPoints(normalized.sides, dimensions).map((point) => rotatePlacementPoint(point, rotation)),
+    });
+  }
+  if (isRoundPlacementShape(normalized)) {
+    return normalizePlacementLayout({
+      ...next,
+      stretchX: normalized.stretchX,
+      stretchY: normalized.stretchY,
+      circleWidth: normalized.circleWidth,
+      circleHeight: normalized.circleHeight,
+      roundPointCount: normalized.roundPointCount,
+      roundPoints: defaultPlacementRoundPoints(normalized.roundPointCount, dimensions).map((point) => rotatePlacementPoint(point, rotation)),
+    });
+  }
+  return next;
+}
+
+function fineTuneImageLayout(layout) {
+  const normalized = normalizePlacementLayout(layout);
+  const base = normalized.fineTuneBase;
+  if (!normalized.fineTune || !base || base.shape !== normalized.shape) {
+    return normalized;
+  }
+  return normalizePlacementLayout({
+    ...normalized,
+    fineTune: false,
+    x: normalized.x,
+    y: normalized.y,
+    rotation: normalized.rotation,
+    stretchX: base.stretchX,
+    stretchY: base.stretchY,
+    circleWidth: base.circleWidth,
+    circleHeight: base.circleHeight,
+    rectLength: base.rectLength,
+    rectWidth: base.rectWidth,
+    sideLength: base.sideLength,
+    sides: base.sides,
+    roundPointCount: base.roundPointCount,
+    quadCorners: null,
+    polygonPoints: null,
+    roundPoints: null,
+    fineTuneBase: null,
+  });
 }
 
 function placementRenderMetrics(layout, scaleMultiplier = 1, options = {}) {
@@ -1667,18 +1865,12 @@ function placementControlModel(layout) {
   const normalized = normalizePlacementLayout(layout);
   if (isRoundPlacementShape(normalized)) {
     return {
-      primaryLabel: "横向伸缩%",
-      primaryKey: "stretchX",
-      primaryValue: Math.round(normalized.stretchX * 10) / 10,
+      primaryLabel: "整体缩放%",
+      primaryKey: "roundScale",
+      primaryValue: Math.round((normalized.roundScale ?? normalized.stretchX) * 10) / 10,
       primaryMin: 0,
       primaryMax: 220,
       primaryStep: 0.1,
-      secondaryLabel: "纵向伸缩%",
-      secondaryKey: "stretchY",
-      secondaryValue: Math.round(normalized.stretchY * 10) / 10,
-      secondaryMin: 0,
-      secondaryMax: 220,
-      secondaryStep: 0.1,
     };
   }
   if (normalized.shape === "polygon") {
@@ -1744,6 +1936,10 @@ function convertPlacementShape(layout, nextShape) {
     rectWidth: short,
     longAxis: raw.width,
     shortAxis: raw.height,
+    roundAnchors: null,
+    roundPoints: null,
+    quadCorners: null,
+    polygonPoints: null,
   });
 }
 
@@ -1799,6 +1995,18 @@ function isRoundPlacementShape(layout) {
   return shape === "circle" || shape === "ellipse";
 }
 
+function isFineTunePlacementShape(layout) {
+  const shape = normalizePlacementLayout(layout).shape;
+  return shape === "rectangle" || shape === "polygon" || shape === "circle" || shape === "ellipse";
+}
+
+function placementFineTuneLabel(layout) {
+  const shape = normalizePlacementLayout(layout).shape;
+  if (shape === "polygon") return "顶点微调";
+  if (shape === "rectangle") return "四角微调";
+  return "椭圆贴合微调";
+}
+
 function normalizeTuneLineColor(value) {
   if (value === "red" || value === "#f04438" || value === "#ff0000") return "red";
   return value === "white" || value === "#fff" || value === "#ffffff" ? "white" : "black";
@@ -1845,18 +2053,88 @@ function placementPolygonHandlesMarkup(layout, dimensions) {
     .join("");
 }
 
-function roundPlacementResizeHandlesMarkup() {
+function roundPointPercent(layout, dimensions, index) {
+  const points = placementRoundPoints(layout);
+  const pointIndex = Math.round(clamp(Number(index), 0, points.length - 1));
+  return points[pointIndex] ? placementPointToElementPercent(points[pointIndex], dimensions) : { x: 50, y: 50 };
+}
+
+function roundCurveControlPoints(points, index, tension = 0.22) {
+  const count = points.length;
+  const current = points[index];
+  const next = points[(index + 1) % count];
+  const previous = points[(index - 1 + count) % count];
+  const afterNext = points[(index + 2) % count];
+  return {
+    c1: {
+      x: current.x + (next.x - previous.x) * tension,
+      y: current.y + (next.y - previous.y) * tension,
+    },
+    c2: {
+      x: next.x - (afterNext.x - current.x) * tension,
+      y: next.y - (afterNext.y - current.y) * tension,
+    },
+  };
+}
+
+function roundCurveSvgPathFromPoints(points) {
+  if (!points.length) return "";
+  const commands = [`M ${points[0].x.toFixed(3)} ${points[0].y.toFixed(3)}`];
+  for (let index = 0; index < points.length; index += 1) {
+    const next = points[(index + 1) % points.length];
+    const { c1, c2 } = roundCurveControlPoints(points, index);
+    commands.push(`C ${c1.x.toFixed(3)} ${c1.y.toFixed(3)} ${c2.x.toFixed(3)} ${c2.y.toFixed(3)} ${next.x.toFixed(3)} ${next.y.toFixed(3)}`);
+  }
+  commands.push("Z");
+  return commands.join(" ");
+}
+
+function placementRoundCurveSvgPath(layout, dimensions) {
+  const points = placementRoundPoints(layout).map((point) => placementPointToElementPercent(point, dimensions));
+  return roundCurveSvgPathFromPoints(points);
+}
+
+function roundPlacementResizeHandlesMarkup(layout = null, dimensions = null) {
+  const points = layout && dimensions ? placementRoundPoints(layout) : defaultPlacementRoundPoints(4, { width: 100, height: 100 });
+  const anchorStyle = (index) => {
+    if (!layout || !dimensions) return "";
+    const point = roundPointPercent(layout, dimensions, index);
+    return ` style="left: ${point.x}%; top: ${point.y}%;"`;
+  };
+  return points
+    .map((_, index) => `<button class="placement-resize-handle placement-resize-handle--point" type="button" data-round-index="${index}" aria-label="微调点 ${index + 1}"${anchorStyle(index)}></button>`)
+    .join("");
+}
+
+function coarsePlacementResizeHandlesMarkup(layout) {
+  const normalized = normalizePlacementLayout(layout);
+  if (!isFineTunePlacementShape(normalized)) return "";
+  const handles = [
+    { side: "left", axis: "x", className: "placement-resize-handle--x", label: "横向缩放" },
+    { side: "right", axis: "x", className: "placement-resize-handle--x", label: "横向缩放" },
+    { side: "top", axis: "y", className: "placement-resize-handle--y", label: "纵向缩放" },
+    { side: "bottom", axis: "y", className: "placement-resize-handle--y", label: "纵向缩放" },
+  ];
+  return handles
+    .map(
+      (handle) =>
+        `<button class="placement-resize-handle ${handle.className}" type="button" data-resize-axis="${handle.axis}" data-resize-side="${handle.side}" aria-label="${handle.label}"></button>`,
+    )
+    .join("");
+}
+
+function roundPlacementFineTuneMarkup(layout, dimensions) {
   return `
-    <button class="placement-resize-handle placement-resize-handle--x" type="button" data-resize-axis="x" data-resize-side="left" aria-label="横向伸缩"></button>
-    <button class="placement-resize-handle placement-resize-handle--x" type="button" data-resize-axis="x" data-resize-side="right" aria-label="横向伸缩"></button>
-    <button class="placement-resize-handle placement-resize-handle--y" type="button" data-resize-axis="y" data-resize-side="top" aria-label="纵向伸缩"></button>
-    <button class="placement-resize-handle placement-resize-handle--y" type="button" data-resize-axis="y" data-resize-side="bottom" aria-label="纵向伸缩"></button>
+    <svg class="placement-outline-svg placement-outline-svg--round" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <path d="${placementRoundCurveSvgPath(layout, dimensions)}"></path>
+    </svg>
+    ${roundPlacementResizeHandlesMarkup(layout, dimensions)}
   `;
 }
 
 function fitPlacementRectangleCorner(layout, corner, point) {
   const normalized = normalizePlacementLayout(layout);
-  const localPoint = localPointFromCanvasPercent(normalized, point);
+  const localPoint = localPointFromCanvasPercent(normalized, point, { useRotation: !normalized.fineTune });
   const nextCorners = {
     ...placementQuadCorners(normalized),
     [corner]: {
@@ -1875,7 +2153,7 @@ function fitPlacementPolygonPoint(layout, index, point) {
   const normalized = normalizePlacementLayout(layout);
   const points = placementPolygonPoints(normalized);
   const pointIndex = Math.round(clamp(Number(index), 0, points.length - 1));
-  const localPoint = localPointFromCanvasPercent(normalized, point);
+  const localPoint = localPointFromCanvasPercent(normalized, point, { useRotation: !normalized.fineTune });
   const nextPoints = points.map((item, currentIndex) =>
     currentIndex === pointIndex
       ? {
@@ -1902,13 +2180,63 @@ function fitRoundPlacementStretch(layout, axis, point) {
   const nextStretch = clamp(Math.round((placementSize / (baseSize * PLACEMENT_DIMENSION_SCALE)) * 1000) / 10, 0, 220);
   return normalizePlacementLayout({
     ...normalized,
-    [axis === "x" ? "stretchX" : "stretchY"]: nextStretch,
+    roundScale: nextStretch,
+    stretchX: nextStretch,
+    stretchY: nextStretch,
+  });
+}
+
+function fitPlacementCoarseResize(layout, axis, point) {
+  const normalized = normalizePlacementLayout(layout);
+  if (isRoundPlacementShape(normalized)) {
+    return fitRoundPlacementStretch(normalized, axis, point);
+  }
+  const localPoint = localPointFromCanvasPercent(normalized, point);
+  const distance = Math.abs(axis === "x" ? localPoint.x : localPoint.y);
+  const placementSize = distance * 2;
+  if (normalized.shape === "rectangle") {
+    return normalizePlacementLayout({
+      ...normalized,
+      [axis === "x" ? "rectLength" : "rectWidth"]: clamp(Math.round(placementSize / PLACEMENT_DIMENSION_SCALE), 0, 180),
+      quadCorners: null,
+    });
+  }
+  if (normalized.shape === "polygon") {
+    const sideLength = (placementSize / PLACEMENT_DIMENSION_SCALE) * Math.sin(Math.PI / normalized.sides);
+    return normalizePlacementLayout({
+      ...normalized,
+      sideLength: clamp(Math.round(sideLength), 0, 140),
+      polygonPoints: null,
+    });
+  }
+  return normalized;
+}
+
+function fitRoundPlacementPoint(layout, index, point) {
+  const normalized = normalizePlacementLayout(layout);
+  if (!isRoundPlacementShape(normalized)) return normalized;
+  const points = placementRoundPoints(normalized);
+  const pointIndex = Math.round(clamp(Number(index), 0, points.length - 1));
+  const localPoint = localPointFromCanvasPercent(normalized, point, { useRotation: !normalized.fineTune });
+  const nextPoints = points.map((item, currentIndex) =>
+    currentIndex === pointIndex
+      ? {
+          x: clamp(localPoint.x, -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+          y: clamp(localPoint.y, -PLACEMENT_QUAD_LIMIT, PLACEMENT_QUAD_LIMIT),
+        }
+      : item,
+  );
+  return normalizePlacementLayout({
+    ...normalized,
+    fineTune: true,
+    roundPoints: nextPoints,
+    roundPointCount: points.length,
   });
 }
 
 function placementQuadCanvasPoints(layout, size) {
   const normalized = normalizePlacementLayout(layout);
-  const rotation = placementRotationRad(normalized);
+  const rotation = normalized.fineTune ? 0 : placementRotationRad(normalized);
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
   const center = {
@@ -1956,7 +2284,7 @@ function quadBounds(points) {
 
 function placementPolygonCanvasPoints(layout, size) {
   const normalized = normalizePlacementLayout(layout);
-  const rotation = placementRotationRad(normalized);
+  const rotation = normalized.fineTune ? 0 : placementRotationRad(normalized);
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
   const center = {
@@ -1971,6 +2299,101 @@ function placementPolygonCanvasPoints(layout, size) {
     return {
       x: center.x + local.x * cos - local.y * sin,
       y: center.y + local.x * sin + local.y * cos,
+    };
+  });
+}
+
+function placementRoundCanvasPoints(layout, size) {
+  const normalized = normalizePlacementLayout(layout);
+  const rotation = normalized.fineTune ? 0 : placementRotationRad(normalized);
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const center = {
+    x: (normalized.x / 100) * size,
+    y: (normalized.y / 100) * size,
+  };
+  return placementRoundPoints(normalized).map((point) => {
+    const local = {
+      x: (point.x / 100) * size,
+      y: (point.y / 100) * size,
+    };
+    return {
+      x: center.x + local.x * cos - local.y * sin,
+      y: center.y + local.x * sin + local.y * cos,
+    };
+  });
+}
+
+function traceRoundAnchorPath(ctx, points) {
+  if (!points.length) return;
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let index = 0; index < points.length; index += 1) {
+    const next = points[(index + 1) % points.length];
+    const { c1, c2 } = roundCurveControlPoints(points, index);
+    ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, next.x, next.y);
+  }
+  ctx.closePath();
+}
+
+function sampleRoundAnchorPath(points, segmentCount = 16) {
+  const samples = [];
+  const cubicPoint = (p0, c1, c2, p1, t) => {
+    const inv = 1 - t;
+    return {
+      x: inv ** 3 * p0.x + 3 * inv ** 2 * t * c1.x + 3 * inv * t ** 2 * c2.x + t ** 3 * p1.x,
+      y: inv ** 3 * p0.y + 3 * inv ** 2 * t * c1.y + 3 * inv * t ** 2 * c2.y + t ** 3 * p1.y,
+    };
+  };
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    const { c1, c2 } = roundCurveControlPoints(points, index);
+    for (let step = 0; step < segmentCount; step += 1) {
+      samples.push(cubicPoint(current, c1, c2, next, step / segmentCount));
+    }
+  }
+  return samples;
+}
+
+function roundCanvasEllipseMetrics(layout, size, offsetX = 0, offsetY = 0) {
+  const normalized = normalizePlacementLayout(layout);
+  const dimensions = placementDimensions(normalized);
+  return {
+    center: {
+      x: (normalized.x / 100) * size + offsetX,
+      y: (normalized.y / 100) * size + offsetY,
+    },
+    rx: Math.max(0.5, ((dimensions.width / 100) * size) / 2),
+    ry: Math.max(0.5, ((dimensions.height / 100) * size) / 2),
+    rotation: placementRotationRad(normalized),
+  };
+}
+
+function traceRoundPlacementPath(ctx, layout, points, size, offsetX = 0, offsetY = 0) {
+  const normalized = normalizePlacementLayout(layout);
+  if (!normalized.fineTune) {
+    const metrics = roundCanvasEllipseMetrics(normalized, size, offsetX, offsetY);
+    ctx.ellipse(metrics.center.x, metrics.center.y, metrics.rx, metrics.ry, metrics.rotation, 0, Math.PI * 2);
+    return;
+  }
+  traceRoundAnchorPath(ctx, offsetPointArray(points, offsetX, offsetY));
+}
+
+function sampleRoundPlacementPath(layout, points, size, segmentCount = 24, offsetX = 0, offsetY = 0) {
+  const normalized = normalizePlacementLayout(layout);
+  if (normalized.fineTune) {
+    return sampleRoundAnchorPath(offsetPointArray(points, offsetX, offsetY), segmentCount);
+  }
+  const metrics = roundCanvasEllipseMetrics(normalized, size, offsetX, offsetY);
+  return Array.from({ length: segmentCount * 4 }, (_, index) => {
+    const angle = (index / (segmentCount * 4)) * Math.PI * 2;
+    const localX = Math.cos(angle) * metrics.rx;
+    const localY = Math.sin(angle) * metrics.ry;
+    const cos = Math.cos(metrics.rotation);
+    const sin = Math.sin(metrics.rotation);
+    return {
+      x: metrics.center.x + localX * cos - localY * sin,
+      y: metrics.center.y + localX * sin + localY * cos,
     };
   });
 }
@@ -1992,6 +2415,15 @@ function pointArrayBounds(points) {
     maxX: Math.max(...points.map((point) => point.x)),
     minY: Math.min(...points.map((point) => point.y)),
     maxY: Math.max(...points.map((point) => point.y)),
+  };
+}
+
+function mergeBounds(...boundsList) {
+  return {
+    minX: Math.min(...boundsList.map((bounds) => bounds.minX)),
+    maxX: Math.max(...boundsList.map((bounds) => bounds.maxX)),
+    minY: Math.min(...boundsList.map((bounds) => bounds.minY)),
+    maxY: Math.max(...boundsList.map((bounds) => bounds.maxY)),
   };
 }
 
@@ -2035,10 +2467,68 @@ function getImageContentRect(image) {
   let minY = sampleHeight;
   let maxX = -1;
   let maxY = -1;
+  let matteMinX = sampleWidth;
+  let matteMinY = sampleHeight;
+  let matteMaxX = -1;
+  let matteMaxY = -1;
   let transparentCount = 0;
+  const pixelColor = (x, y) => {
+    const index = (y * sampleWidth + x) * 4;
+    return {
+      r: pixels[index],
+      g: pixels[index + 1],
+      b: pixels[index + 2],
+      a: pixels[index + 3],
+    };
+  };
+  const sampleCorner = (x, y) => {
+    const radius = Math.max(1, Math.min(6, Math.floor(sampleWidth / 8), Math.floor(sampleHeight / 8)));
+    const startX = clamp(x ? sampleWidth - radius : 0, 0, sampleWidth - 1);
+    const startY = clamp(y ? sampleHeight - radius : 0, 0, sampleHeight - 1);
+    const endX = clamp(startX + radius, 1, sampleWidth);
+    const endY = clamp(startY + radius, 1, sampleHeight);
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let a = 0;
+    let count = 0;
+    for (let py = startY; py < endY; py += 1) {
+      for (let px = startX; px < endX; px += 1) {
+        const color = pixelColor(px, py);
+        r += color.r;
+        g += color.g;
+        b += color.b;
+        a += color.a;
+        count += 1;
+      }
+    }
+    return {
+      r: r / count,
+      g: g / count,
+      b: b / count,
+      a: a / count,
+    };
+  };
+  const colorDistance = (a, b) => Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+  const cornerColors = [sampleCorner(0, 0), sampleCorner(1, 0), sampleCorner(0, 1), sampleCorner(1, 1)];
+  const matteColor = cornerColors.reduce(
+    (sum, color) => ({
+      r: sum.r + color.r / cornerColors.length,
+      g: sum.g + color.g / cornerColors.length,
+      b: sum.b + color.b / cornerColors.length,
+      a: sum.a + color.a / cornerColors.length,
+    }),
+    { r: 0, g: 0, b: 0, a: 0 },
+  );
+  const matteBrightness = (matteColor.r + matteColor.g + matteColor.b) / 3;
+  const matteNeutrality = Math.max(matteColor.r, matteColor.g, matteColor.b) - Math.min(matteColor.r, matteColor.g, matteColor.b);
+  const matteCornerSpread = Math.max(...cornerColors.map((color) => colorDistance(color, matteColor)));
+  const hasLikelyLightMatte = matteColor.a > 220 && matteBrightness > 172 && matteNeutrality < 42 && matteCornerSpread < 42;
+
   for (let y = 0; y < sampleHeight; y += 1) {
     for (let x = 0; x < sampleWidth; x += 1) {
-      const alpha = pixels[(y * sampleWidth + x) * 4 + 3];
+      const color = pixelColor(x, y);
+      const alpha = color.a;
       if (alpha < 8) {
         transparentCount += 1;
         continue;
@@ -2047,13 +2537,31 @@ function getImageContentRect(image) {
       minY = Math.min(minY, y);
       maxX = Math.max(maxX, x);
       maxY = Math.max(maxY, y);
+      if (!hasLikelyLightMatte || colorDistance(color, matteColor) > 36 || alpha < 230) {
+        matteMinX = Math.min(matteMinX, x);
+        matteMinY = Math.min(matteMinY, y);
+        matteMaxX = Math.max(matteMaxX, x);
+        matteMaxY = Math.max(matteMaxY, y);
+      }
     }
   }
 
   const hasTransparentPadding = transparentCount > sampleWidth * sampleHeight * 0.01;
-  if (!hasTransparentPadding || maxX < minX || maxY < minY) {
+  const hasLightMattePadding =
+    hasLikelyLightMatte &&
+    matteMaxX >= matteMinX &&
+    matteMaxY >= matteMinY &&
+    (matteMinX > sampleWidth * 0.01 || matteMinY > sampleHeight * 0.01 || matteMaxX < sampleWidth * 0.99 || matteMaxY < sampleHeight * 0.99);
+  if ((!hasTransparentPadding && !hasLightMattePadding) || maxX < minX || maxY < minY) {
     imageContentRectCache.set(image, fallback);
     return fallback;
+  }
+
+  if (hasLightMattePadding) {
+    minX = matteMinX;
+    minY = matteMinY;
+    maxX = matteMaxX;
+    maxY = matteMaxY;
   }
 
   const padding = 1;
@@ -2168,12 +2676,117 @@ function drawImageWarpedToQuad(ctx, image, points, sourceRect, steps = 16) {
   }
 }
 
+function drawCustomRoundProductView(ctx, image, size, layout, depth, shadow, shine, material) {
+  const normalized = normalizePlacementLayout(layout);
+  const points = placementRoundCanvasPoints(normalized, size);
+  const pathSamples = sampleRoundPlacementPath(normalized, points, size);
+  const bounds = pointArrayBounds(pathSamples);
+  const width = Math.max(1, bounds.maxX - bounds.minX);
+  const height = Math.max(1, bounds.maxY - bounds.minY);
+  const sourceRect = getImageContentRect(image);
+  const rotation = placementRotationRad(normalized);
+  const center = {
+    x: (normalized.x / 100) * size,
+    y: (normalized.y / 100) * size,
+  };
+  const imageLayout = fineTuneImageLayout(normalized);
+  const imagePathSamples = sampleRoundPlacementPath(imageLayout, placementRoundCanvasPoints(imageLayout, size), size);
+  const imageBounds = mergeBounds(
+    imageLocalBoundsFromCanvasPoints(imagePathSamples, center, rotation),
+    imageLocalBoundsFromCanvasPoints(pathSamples, center, rotation),
+  );
+  const imageWidth = Math.max(1, imageBounds.maxX - imageBounds.minX);
+  const imageHeight = Math.max(1, imageBounds.maxY - imageBounds.minY);
+  const offsetX = Math.cos(rotation) * depth * 0.98 - Math.sin(rotation) * depth * 0.72;
+  const offsetY = Math.sin(rotation) * depth * 0.98 + Math.cos(rotation) * depth * 0.72;
+
+  if (shadow > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.46 * shadow;
+    ctx.filter = `blur(${Math.max(18, depth * 1.24)}px)`;
+    ctx.fillStyle = "rgba(32,38,36,0.68)";
+    ctx.beginPath();
+    traceRoundPlacementPath(ctx, normalized, points, size, offsetX * 1.14, offsetY * 1.32);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (depth > 0.5) {
+    const base = hexToRgb(state.options.edgeColor || "#8f9188");
+    const layers = Math.max(22, Math.round(depth * 1.1));
+    for (let i = layers; i >= 1; i -= 1) {
+      const t = i / layers;
+      const edgeBounds = pointArrayBounds(sampleRoundPlacementPath(normalized, points, size, 8, offsetX * t, offsetY * t));
+      const edge = ctx.createLinearGradient(edgeBounds.minX, edgeBounds.minY, edgeBounds.maxX, edgeBounds.maxY);
+      if (material === "metal") {
+        edge.addColorStop(0, rgbString(tint(base, 0.42)));
+        edge.addColorStop(0.48, rgbString(shadeColor(base, 0.2)));
+        edge.addColorStop(1, rgbString(shadeColor(base, 0.46)));
+      } else {
+        edge.addColorStop(0, rgbString(tint(base, 0.18)));
+        edge.addColorStop(0.54, rgbString(shadeColor(base, 0.08)));
+        edge.addColorStop(1, rgbString(shadeColor(base, 0.52)));
+      }
+      ctx.save();
+      ctx.globalAlpha = 0.72 + 0.2 * (1 - t);
+      ctx.fillStyle = edge;
+      ctx.beginPath();
+      traceRoundPlacementPath(ctx, normalized, points, size, offsetX * t, offsetY * t);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  traceRoundPlacementPath(ctx, normalized, points, size);
+  ctx.clip();
+  ctx.translate(center.x, center.y);
+  ctx.rotate(rotation);
+  const imageBleed = Math.max(8, size * 0.012);
+  ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
+  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX - imageBleed, imageBounds.minY - imageBleed, imageWidth + imageBleed * 2, imageHeight + imageBleed * 2);
+  ctx.filter = "none";
+  const shade = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.maxY);
+  shade.addColorStop(0, "rgba(255,255,255,0.035)");
+  shade.addColorStop(0.58, "rgba(255,255,255,0)");
+  shade.addColorStop(1, "rgba(0,0,0,0.12)");
+  ctx.fillStyle = shade;
+  ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
+  if (material === "acrylic") {
+    const gloss = ctx.createRadialGradient(imageBounds.minX + imageWidth * 0.34, imageBounds.minY + imageHeight * 0.18, imageWidth * 0.04, imageBounds.minX + imageWidth * 0.44, imageBounds.minY + imageHeight * 0.28, Math.max(imageWidth, imageHeight) * 0.36);
+    gloss.addColorStop(0, `rgba(255,255,255,${0.026 + shine * 0.03})`);
+    gloss.addColorStop(0.48, `rgba(255,255,255,${0.008 + shine * 0.012})`);
+    gloss.addColorStop(0.82, "rgba(255,255,255,0)");
+    gloss.addColorStop(1, "rgba(0,0,0,0.055)");
+    ctx.fillStyle = gloss;
+    ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(0,0,0,0.28)";
+  ctx.lineWidth = Math.max(1, size * 0.001);
+  ctx.beginPath();
+  traceRoundPlacementPath(ctx, normalized, points, size);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, material) {
   const normalized = normalizePlacementLayout(layout);
   const points = placementQuadCanvasPoints(normalized, size);
   const bounds = quadBounds(points);
   const sourceRect = getImageContentRect(image);
   const rotation = placementRotationRad(normalized);
+  const center = {
+    x: (normalized.x / 100) * size,
+    y: (normalized.y / 100) * size,
+  };
+  const imageBounds = imageLocalBoundsFromCanvasPoints(PLACEMENT_QUAD_CORNERS.map((key) => points[key]), center, rotation);
+  const imageWidth = Math.max(1, imageBounds.maxX - imageBounds.minX);
+  const imageHeight = Math.max(1, imageBounds.maxY - imageBounds.minY);
   const offsetX = Math.cos(rotation) * depth * 0.98 - Math.sin(rotation) * depth * 0.72;
   const offsetY = Math.sin(rotation) * depth * 0.98 + Math.cos(rotation) * depth * 0.72;
 
@@ -2201,9 +2814,9 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
         edge.addColorStop(0.48, rgbString(shadeColor(base, 0.2)));
         edge.addColorStop(1, rgbString(shadeColor(base, 0.46)));
       } else {
-        edge.addColorStop(0, rgbString(tint(base, 0.48)));
-        edge.addColorStop(0.54, rgbString(tint(base, 0.1)));
-        edge.addColorStop(1, rgbString(shadeColor(base, 0.48)));
+        edge.addColorStop(0, rgbString(tint(base, 0.18)));
+        edge.addColorStop(0.54, rgbString(shadeColor(base, 0.08)));
+        edge.addColorStop(1, rgbString(shadeColor(base, 0.52)));
       }
       ctx.save();
       ctx.globalAlpha = 0.72 + 0.2 * (1 - t);
@@ -2219,36 +2832,32 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
   ctx.beginPath();
   traceQuad(ctx, points);
   ctx.clip();
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+  ctx.translate(center.x, center.y);
+  ctx.rotate(rotation);
+  const imageBleed = Math.max(8, size * 0.012);
   ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-  drawImageWarpedToQuad(ctx, image, points, sourceRect, size > 2600 ? 28 : 22);
+  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX - imageBleed, imageBounds.minY - imageBleed, imageWidth + imageBleed * 2, imageHeight + imageBleed * 2);
   ctx.filter = "none";
-  const shade = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
-  shade.addColorStop(0, "rgba(255,255,255,0.08)");
+  const shade = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.maxY);
+  shade.addColorStop(0, "rgba(255,255,255,0.035)");
   shade.addColorStop(0.58, "rgba(255,255,255,0)");
   shade.addColorStop(1, "rgba(0,0,0,0.12)");
   ctx.fillStyle = shade;
-  ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+  ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
   if (material === "acrylic") {
-    const gloss = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.minY + (bounds.maxY - bounds.minY) * 0.5);
-    gloss.addColorStop(0, `rgba(255,255,255,${0.08 + shine * 0.1})`);
-    gloss.addColorStop(0.44, `rgba(255,255,255,${0.02 + shine * 0.04})`);
+    const gloss = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.minY + imageHeight * 0.5);
+    gloss.addColorStop(0, `rgba(255,255,255,${0.04 + shine * 0.055})`);
+    gloss.addColorStop(0.44, `rgba(255,255,255,${0.01 + shine * 0.018})`);
     gloss.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = gloss;
-    ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+    ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
   }
   ctx.restore();
 
   ctx.save();
   ctx.lineJoin = "round";
-  ctx.strokeStyle = "rgba(255,255,255,0.7)";
-  ctx.lineWidth = Math.max(1.5, size * 0.0016);
-  ctx.beginPath();
-  traceQuad(ctx, points);
-  ctx.stroke();
-  ctx.strokeStyle = "rgba(0,0,0,0.32)";
-  ctx.lineWidth = Math.max(1.2, size * 0.0012);
+  ctx.strokeStyle = "rgba(0,0,0,0.28)";
+  ctx.lineWidth = Math.max(1, size * 0.001);
   ctx.beginPath();
   traceQuad(ctx, points);
   ctx.stroke();
@@ -2264,6 +2873,13 @@ function drawCustomPolygonProductView(ctx, image, size, layout, depth, shadow, s
   const height = Math.max(1, bounds.maxY - bounds.minY);
   const sourceRect = getImageContentRect(image);
   const rotation = placementRotationRad(normalized);
+  const center = {
+    x: (normalized.x / 100) * size,
+    y: (normalized.y / 100) * size,
+  };
+  const imageBounds = imageLocalBoundsFromCanvasPoints(points, center, rotation);
+  const imageWidth = Math.max(1, imageBounds.maxX - imageBounds.minX);
+  const imageHeight = Math.max(1, imageBounds.maxY - imageBounds.minY);
   const offsetX = Math.cos(rotation) * depth * 0.98 - Math.sin(rotation) * depth * 0.72;
   const offsetY = Math.sin(rotation) * depth * 0.98 + Math.cos(rotation) * depth * 0.72;
 
@@ -2291,9 +2907,9 @@ function drawCustomPolygonProductView(ctx, image, size, layout, depth, shadow, s
         edge.addColorStop(0.48, rgbString(shadeColor(base, 0.2)));
         edge.addColorStop(1, rgbString(shadeColor(base, 0.46)));
       } else {
-        edge.addColorStop(0, rgbString(tint(base, 0.48)));
-        edge.addColorStop(0.54, rgbString(tint(base, 0.1)));
-        edge.addColorStop(1, rgbString(shadeColor(base, 0.48)));
+        edge.addColorStop(0, rgbString(tint(base, 0.18)));
+        edge.addColorStop(0.54, rgbString(shadeColor(base, 0.08)));
+        edge.addColorStop(1, rgbString(shadeColor(base, 0.52)));
       }
       ctx.save();
       ctx.globalAlpha = 0.72 + 0.2 * (1 - t);
@@ -2309,45 +2925,41 @@ function drawCustomPolygonProductView(ctx, image, size, layout, depth, shadow, s
   ctx.beginPath();
   tracePointArray(ctx, points);
   ctx.clip();
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(bounds.minX, bounds.minY, width, height);
+  ctx.translate(center.x, center.y);
+  ctx.rotate(rotation);
+  const imageBleed = Math.max(8, size * 0.012);
   ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, bounds.minX, bounds.minY, width, height);
+  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX - imageBleed, imageBounds.minY - imageBleed, imageWidth + imageBleed * 2, imageHeight + imageBleed * 2);
   ctx.filter = "none";
-  const shade = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
-  shade.addColorStop(0, "rgba(255,255,255,0.08)");
+  const shade = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.maxY);
+  shade.addColorStop(0, "rgba(255,255,255,0.035)");
   shade.addColorStop(0.58, "rgba(255,255,255,0)");
   shade.addColorStop(1, "rgba(0,0,0,0.12)");
   ctx.fillStyle = shade;
-  ctx.fillRect(bounds.minX, bounds.minY, width, height);
+  ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
   if (material === "acrylic") {
-    const gloss = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.minY + height * 0.5);
-    gloss.addColorStop(0, `rgba(255,255,255,${0.08 + shine * 0.1})`);
-    gloss.addColorStop(0.44, `rgba(255,255,255,${0.02 + shine * 0.04})`);
+    const gloss = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.minY + imageHeight * 0.5);
+    gloss.addColorStop(0, `rgba(255,255,255,${0.04 + shine * 0.055})`);
+    gloss.addColorStop(0.44, `rgba(255,255,255,${0.01 + shine * 0.018})`);
     gloss.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = gloss;
-    ctx.fillRect(bounds.minX, bounds.minY, width, height);
+    ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
   }
   ctx.restore();
 
   ctx.save();
   ctx.lineJoin = "round";
-  ctx.strokeStyle = "rgba(255,255,255,0.7)";
-  ctx.lineWidth = Math.max(1.5, size * 0.0016);
-  ctx.beginPath();
-  tracePointArray(ctx, points);
-  ctx.stroke();
-  ctx.strokeStyle = "rgba(0,0,0,0.32)";
-  ctx.lineWidth = Math.max(1.2, size * 0.0012);
+  ctx.strokeStyle = "rgba(0,0,0,0.28)";
+  ctx.lineWidth = Math.max(1, size * 0.001);
   ctx.beginPath();
   tracePointArray(ctx, points);
   ctx.stroke();
   ctx.restore();
 }
 
-function localPointFromCanvasPercent(layout, point) {
+function localPointFromCanvasPercent(layout, point, { useRotation = true } = {}) {
   const normalized = normalizePlacementLayout(layout);
-  const rotation = placementRotationRad(normalized);
+  const rotation = useRotation ? placementRotationRad(normalized) : 0;
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
   const delta = {
@@ -2434,29 +3046,32 @@ function placementShapeMarkup(layout, view, options = {}) {
   const viewScaleY = options.preserveCircle && normalized.shape === "circle" ? 1 : view.y ?? 1;
   const width = clamp(dimensions.width * scale * viewScaleX, 0, 98);
   const height = clamp(dimensions.height * scale * viewScaleY, 0, 98);
-  const fineTuneActive = Boolean(options.fineTuneActive) && (normalized.shape === "rectangle" || normalized.shape === "polygon");
+  const fineTuneActive = Boolean(options.fineTuneActive) && isFineTunePlacementShape(normalized);
   const cornerTune = fineTuneActive && normalized.shape === "rectangle";
   const polygonTune = fineTuneActive && normalized.shape === "polygon";
-  const roundResize = Boolean(options.draggable) && isRoundPlacementShape(normalized);
+  const roundTune = fineTuneActive && isRoundPlacementShape(normalized);
+  const coarseResize = options.draggable && !fineTuneActive && isFineTunePlacementShape(normalized);
   const classes = [
     "placement-stage-shape",
     `placement-stage-shape--${normalized.shape}`,
     options.draggable ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed",
-    roundResize ? "placement-stage-shape--resizable" : "",
+    roundTune || coarseResize ? "placement-stage-shape--resizable" : "",
     fineTuneActive ? "placement-stage-shape--fine-tune" : "",
   ].join(" ");
   const content =
     normalized.shape === "polygon"
-      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${polygonTune ? placementPolygonSvgPoints(normalized, dimensions) : regularPolygonSvgPoints(normalized.sides)}"></polygon></svg>${polygonTune ? placementPolygonHandlesMarkup(normalized, dimensions) : ""}`
+      ? `<svg class="placement-outline-svg placement-outline-svg--polygon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${polygonTune ? placementPolygonSvgPoints(normalized, dimensions) : regularPolygonSvgPoints(normalized.sides)}"></polygon></svg>${polygonTune ? placementPolygonHandlesMarkup(normalized, dimensions) : coarseResize ? coarsePlacementResizeHandlesMarkup(normalized) : ""}`
       : cornerTune
         ? `<svg class="placement-quad-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${placementQuadSvgPoints(normalized, dimensions)}"></polygon></svg>${placementCornerHandlesMarkup(normalized, dimensions)}`
         : normalized.shape === "rectangle"
-          ? `<svg class="placement-outline-svg placement-outline-svg--rectangle" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${rectangleSvgPoints()}"></polygon></svg>`
-        : `<span></span>${roundResize ? roundPlacementResizeHandlesMarkup() : ""}`;
+          ? `<svg class="placement-outline-svg placement-outline-svg--rectangle" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${rectangleSvgPoints()}"></polygon></svg>${coarseResize ? coarsePlacementResizeHandlesMarkup(normalized) : ""}`
+        : roundTune
+          ? roundPlacementFineTuneMarkup(normalized, dimensions)
+          : `<span></span>${coarseResize ? coarsePlacementResizeHandlesMarkup(normalized) : ""}`;
   return `
     <div
       class="${classes}"
-      style="left: ${(view.cx * 100).toFixed(3)}%; top: ${(view.cy * 100).toFixed(3)}%; width: ${width}%; height: ${height}%; --shape-rotate: ${view.rot || 0}rad; --polygon-path: ${regularPolygonClipPath(normalized.sides)}; --tune-color: ${placementTuneLineColor(normalized)};"
+      style="left: ${(view.cx * 100).toFixed(3)}%; top: ${(view.cy * 100).toFixed(3)}%; width: ${width}%; height: ${height}%; --shape-rotate: ${fineTuneActive ? 0 : view.rot || 0}rad; --polygon-path: ${regularPolygonClipPath(normalized.sides)}; --tune-color: ${placementTuneLineColor(normalized)};"
     >
       ${content}
     </div>
@@ -2573,38 +3188,12 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
   const productScale = layoutMode === "free" ? 1 : renderMetrics.radius / 0.34;
 
   if (layoutMode === "free") {
-    if (placementLayout.shape === "rectangle" && placementLayout.fineTune) {
+    if (isRoundPlacementShape(placementLayout)) {
+      drawCustomRoundProductView(ctx, source, size, placementLayout, depth * 1.16, shadow, shine, options.material);
+    } else if (placementLayout.shape === "rectangle") {
       drawQuadProductView(ctx, source, size, placementLayout, depth * 1.16, shadow, shine, options.material);
-    } else if (placementLayout.shape === "polygon" && placementLayout.fineTune) {
+    } else if (placementLayout.shape === "polygon") {
       drawCustomPolygonProductView(ctx, source, size, placementLayout, depth * 1.16, shadow, shine, options.material);
-    } else {
-      const radius = renderMetrics.radius;
-      if (radius > 0) {
-        const viewDepth = 1.16;
-        drawBadgeView(
-          ctx,
-          source,
-          size,
-          {
-            cx: placementLayout.x / 100,
-            cy: placementLayout.y / 100,
-            r: radius,
-            depth: viewDepth,
-            x: 1,
-            y: 1,
-            yaw: 0,
-            pitch: 0,
-            rot: placementRotationRad(placementLayout),
-            primary: true,
-          },
-          depth,
-          shadow,
-          shine,
-          options.material,
-          productScale,
-          renderShapeModel,
-        );
-      }
     }
   } else if (productScale <= 0) {
     // A fixed overall scale of 0 means render only the background and optional label.
@@ -3236,9 +3825,6 @@ function drawFace(ctx, image, view) {
     traceProductShape(ctx, view);
     ctx.clip();
 
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
-
     const targetWidth = rx * 2;
     const targetHeight = ry * 2;
     const sourceRect = getImageContentRect(image);
@@ -3751,15 +4337,16 @@ function paintPlacementStage(backgroundItem, options = {}) {
       ? [{ cx: (layout.x ?? 50) / 100, cy: (layout.y ?? 50) / 100, r: 0.34, rot: placementRotationRad(layout) }]
       : getFixedLayoutPlaceholderViews(layoutMode);
   const fixedScaleMultiplier = layoutMode === "free" ? 1 : layout.fixedScale / 100;
-  const fineTuneEnabled = layoutMode === "free" && (layout.shape === "rectangle" || layout.shape === "polygon");
+  const fineTuneEnabled = layoutMode === "free" && isFineTunePlacementShape(layout);
   const fineTuneActive = fineTuneEnabled && layout.fineTune;
-  const lockPrimary = fineTuneActive && (layout.shape === "rectangle" || layout.shape === "polygon");
-  const lockSecondary = fineTuneActive && layout.shape === "rectangle";
+  const roundFineTuneEnabled = fineTuneActive && isRoundPlacementShape(layout);
+  const lockPrimary = fineTuneActive && (layout.shape === "rectangle" || layout.shape === "polygon" || isRoundPlacementShape(layout));
+  const lockSecondary = fineTuneActive && (layout.shape === "rectangle" || isRoundPlacementShape(layout));
   const lockSides = fineTuneActive && layout.shape === "polygon";
   stage.style.setProperty("--stage-bg", "#f4f5f2");
   stage.classList.remove("stage--checker");
   stage.classList.add("stage--placement");
-  const livePreviewUrl = options.livePreviewUrl || "";
+  const livePreviewUrl = "";
   stage.innerHTML = `
     <div class="placement-workspace">
       <div class="placement-canvas ${livePreviewUrl ? "placement-canvas--live" : ""}" data-background-id="${backgroundItem.id}">
@@ -3793,17 +4380,21 @@ function paintPlacementStage(backgroundItem, options = {}) {
           <span>旋转角度</span>
           <input id="placementRotation" class="number-control" type="number" min="-180" max="180" step="0.1" value="${layout.rotation}" />
         </label>
-        <label class="placement-control placement-control--toggle ${fineTuneEnabled ? "" : "field--hidden"}">
-          <span>${layout.shape === "polygon" ? "顶点微调" : "四角微调"}</span>
-          <input id="placementFineTune" type="checkbox" ${layout.fineTune ? "checked" : ""} />
-        </label>
-        <label class="placement-control ${fineTuneEnabled ? "" : "field--hidden"}">
-          <span>微调线色</span>
+        <label class="placement-control ${layoutMode === "free" ? "" : "field--hidden"}">
+          <span>边缘颜色</span>
           <select id="placementTuneLineColor" class="number-control">
             <option value="black" ${layout.tuneLineColor === "black" ? "selected" : ""}>黑色</option>
             <option value="white" ${layout.tuneLineColor === "white" ? "selected" : ""}>白色</option>
             <option value="red" ${layout.tuneLineColor === "red" ? "selected" : ""}>红色</option>
           </select>
+        </label>
+        <label class="placement-control placement-control--toggle ${fineTuneEnabled ? "" : "field--hidden"}">
+          <span>${placementFineTuneLabel(layout)}</span>
+          <input id="placementFineTune" type="checkbox" ${layout.fineTune ? "checked" : ""} />
+        </label>
+        <label class="placement-control ${roundFineTuneEnabled ? "" : "field--hidden"}">
+          <span>微调点数</span>
+          <input id="placementRoundPointCount" class="number-control" type="number" min="${PLACEMENT_ROUND_POINT_MIN}" max="${PLACEMENT_ROUND_POINT_MAX}" step="1" value="${layout.roundPointCount}" />
         </label>
       </div>
     </div>
@@ -3822,11 +4413,12 @@ function bindPlacementStage(backgroundItem) {
   const rotationInput = stage.querySelector("#placementRotation");
   const fixedScaleInput = stage.querySelector("#placementFixedScale");
   const fineTuneInput = stage.querySelector("#placementFineTune");
+  const roundPointCountInput = stage.querySelector("#placementRoundPointCount");
   const tuneLineColorInput = stage.querySelector("#placementTuneLineColor");
   const fixedScaleLabel = stage.querySelector("[data-placement-value='fixedScale']");
   const badgeMarker = stage.querySelector(".badge-marker");
   const layoutMode = getBackgroundLayoutMode(backgroundItem);
-  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !fixedScaleInput || !fineTuneInput || !tuneLineColorInput || !fixedScaleLabel) return;
+  if (!canvas || !shapes.length || !primaryInput || !secondaryInput || !sidesInput || !rotationInput || !fixedScaleInput || !fineTuneInput || !roundPointCountInput || !tuneLineColorInput || !fixedScaleLabel) return;
 
   const updateShapeElement = () => {
     const layout = placementLayoutForBackground(backgroundItem);
@@ -3844,20 +4436,30 @@ function bindPlacementStage(backgroundItem) {
       const scale = view.r / 0.34;
       const viewScaleX = preserveFixedCircle && layout.shape === "circle" ? 1 : view.x ?? 1;
       const viewScaleY = preserveFixedCircle && layout.shape === "circle" ? 1 : view.y ?? 1;
-      const fineTuneActive = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon");
-      const roundResize = layoutMode === "free" && isRoundPlacementShape(layout);
-      shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"} ${roundResize ? "placement-stage-shape--resizable" : ""} ${fineTuneActive ? "placement-stage-shape--fine-tune" : ""}`;
+      const fineTuneActive = layoutMode === "free" && layout.fineTune && isFineTunePlacementShape(layout);
+      const roundResize = fineTuneActive && isRoundPlacementShape(layout);
+      const coarseResize = layoutMode === "free" && !fineTuneActive && isFineTunePlacementShape(layout);
+      shape.className = `placement-stage-shape placement-stage-shape--${layout.shape} ${layoutMode === "free" ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed"} ${roundResize || coarseResize ? "placement-stage-shape--resizable" : ""} ${fineTuneActive ? "placement-stage-shape--fine-tune" : ""}`;
       shape.style.left = `${(view.cx * 100).toFixed(3)}%`;
       shape.style.top = `${(view.cy * 100).toFixed(3)}%`;
       shape.style.width = `${clamp(dimensions.width * scale * viewScaleX, 0, 98)}%`;
       shape.style.height = `${clamp(dimensions.height * scale * viewScaleY, 0, 98)}%`;
-      shape.style.setProperty("--shape-rotate", `${view.rot || 0}rad`);
+      shape.style.setProperty("--shape-rotate", `${fineTuneActive ? 0 : view.rot || 0}rad`);
       shape.style.setProperty("--polygon-path", regularPolygonClipPath(layout.sides));
       shape.style.setProperty("--tune-color", placementTuneLineColor(layout));
       const polygon = shape.querySelector(".placement-outline-svg--polygon polygon");
       if (polygon) polygon.setAttribute("points", fineTuneActive && layout.shape === "polygon" ? placementPolygonSvgPoints(layout, dimensions) : regularPolygonSvgPoints(layout.sides));
       const quadPolygon = shape.querySelector(".placement-quad-svg polygon");
       if (quadPolygon) quadPolygon.setAttribute("points", placementQuadSvgPoints(layout, dimensions));
+      const roundPath = shape.querySelector(".placement-outline-svg--round path");
+      if (roundPath) roundPath.setAttribute("d", placementRoundCurveSvgPath(layout, dimensions));
+      shape.querySelectorAll(".placement-resize-handle").forEach((handle) => {
+        const pointIndex = handle.dataset.roundIndex;
+        if (typeof pointIndex === "undefined" || !isRoundPlacementShape(layout)) return;
+        const point = roundPointPercent(layout, dimensions, pointIndex);
+        handle.style.left = `${point.x}%`;
+        handle.style.top = `${point.y}%`;
+      });
       shape.querySelectorAll(".placement-corner-handle").forEach((handle) => {
         let point = null;
         if (handle.dataset.corner) {
@@ -3879,15 +4481,17 @@ function bindPlacementStage(backgroundItem) {
     rotationInput.value = layout.rotation;
     fixedScaleInput.value = layout.fixedScale;
     fineTuneInput.checked = layout.fineTune;
+    roundPointCountInput.value = layout.roundPointCount;
+    roundPointCountInput.disabled = !(layoutMode === "free" && layout.fineTune && isRoundPlacementShape(layout));
     tuneLineColorInput.value = layout.tuneLineColor;
     fixedScaleLabel.textContent = layout.fixedScale;
-    const lockPrimary = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon");
-    const lockSecondary = layoutMode === "free" && layout.fineTune && layout.shape === "rectangle";
+    const lockPrimary = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon" || isRoundPlacementShape(layout));
+    const lockSecondary = layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || isRoundPlacementShape(layout));
     const lockSides = layoutMode === "free" && layout.fineTune && layout.shape === "polygon";
     primaryInput.disabled = lockPrimary;
     secondaryInput.disabled = lockSecondary;
     sidesInput.disabled = lockSides;
-    clearNumberInputState(primaryInput, secondaryInput, sidesInput, rotationInput);
+    clearNumberInputState(primaryInput, secondaryInput, sidesInput, rotationInput, roundPointCountInput);
   };
 
   const savePlacementChange = (message) => {
@@ -3915,10 +4519,11 @@ function bindPlacementStage(backgroundItem) {
     resizeHandles.forEach((handle) => {
       let isDraggingResize = false;
       const axis = handle.dataset.resizeAxis;
+      const roundIndex = handle.dataset.roundIndex;
       const moveResize = (event) => {
         const point = pointerToCanvasPercent(event);
         const layout = placementLayoutForBackground(backgroundItem);
-        backgroundItem.freeLayout = fitRoundPlacementStretch(layout, axis, point);
+        backgroundItem.freeLayout = layout.fineTune && isRoundPlacementShape(layout) ? fitRoundPlacementPoint(layout, roundIndex, point) : fitPlacementCoarseResize(layout, axis, point);
         updateShapeElement();
         clearRendered();
         scheduleLivePreview();
@@ -3943,7 +4548,8 @@ function bindPlacementStage(backgroundItem) {
         event.stopPropagation();
         isDraggingResize = false;
         handle.releasePointerCapture(event.pointerId);
-        savePlacementChange(axis === "x" ? "横向伸缩已更新，可以重新生成" : "纵向伸缩已更新，可以重新生成");
+        const layout = placementLayoutForBackground(backgroundItem);
+        savePlacementChange(layout.fineTune && isRoundPlacementShape(layout) ? "椭圆贴合点已独立微调，可以重新生成" : axis === "x" ? "横向尺寸已更新，可以重新生成" : "纵向尺寸已更新，可以重新生成");
       });
       handle.addEventListener("pointercancel", () => {
         isDraggingResize = false;
@@ -3991,41 +4597,73 @@ function bindPlacementStage(backgroundItem) {
       });
     });
 
-    let isDragging = false;
-    const moveShape = (event) => {
-      const { x, y } = pointerToCanvasPercent(event);
-      backgroundItem.freeLayout = { ...placementLayoutForBackground(backgroundItem), x, y };
-      shapes[0].style.left = `${x}%`;
-      shapes[0].style.top = `${y}%`;
+    let isDraggingShape = false;
+    let dragPointerId = null;
+    let dragStartPoint = null;
+    let dragStartLayout = null;
+    let dragMoved = false;
+    const moveShapeByDrag = (event) => {
+      if (!dragStartPoint || !dragStartLayout) return;
+      const currentPoint = pointerToCanvasPercent(event);
+      const nextX = clamp(dragStartLayout.x + currentPoint.x - dragStartPoint.x, 0, 100);
+      const nextY = clamp(dragStartLayout.y + currentPoint.y - dragStartPoint.y, 0, 100);
+      dragMoved = dragMoved || Math.abs(nextX - dragStartLayout.x) > 0.05 || Math.abs(nextY - dragStartLayout.y) > 0.05;
+      backgroundItem.freeLayout = { ...placementLayoutForBackground(backgroundItem), x: nextX, y: nextY };
+      updateShapeElement();
+      clearRendered();
+      scheduleLivePreview();
     };
 
-    canvas.addEventListener("pointerdown", (event) => {
-      if (event.target.closest(".placement-corner-handle, .placement-resize-handle")) return;
-      event.preventDefault();
-      isDragging = true;
-      canvas.setPointerCapture(event.pointerId);
-      moveShape(event);
-    });
-    canvas.addEventListener("pointermove", (event) => {
-      if (!isDragging) return;
-      moveShape(event);
-    });
-    canvas.addEventListener("pointerup", (event) => {
-      if (!isDragging) return;
-      isDragging = false;
-      canvas.releasePointerCapture(event.pointerId);
-      savePlacementChange("图形占位位置已更新，可以重新生成");
-    });
-    canvas.addEventListener("pointercancel", () => {
-      isDragging = false;
+    shapes.forEach((shape) => {
+      shape.addEventListener("pointerdown", (event) => {
+        if (event.target.closest(".placement-corner-handle, .placement-resize-handle")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        isDraggingShape = true;
+        dragMoved = false;
+        dragPointerId = event.pointerId;
+        dragStartPoint = pointerToCanvasPercent(event);
+        dragStartLayout = placementLayoutForBackground(backgroundItem);
+        shape.setPointerCapture(event.pointerId);
+      });
+      shape.addEventListener("pointermove", (event) => {
+        if (!isDraggingShape || event.pointerId !== dragPointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        moveShapeByDrag(event);
+      });
+      shape.addEventListener("pointerup", (event) => {
+        if (!isDraggingShape || event.pointerId !== dragPointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        isDraggingShape = false;
+        dragPointerId = null;
+        shape.releasePointerCapture(event.pointerId);
+        if (dragMoved) savePlacementChange("图形占位位置已更新，可以重新生成");
+        dragStartPoint = null;
+        dragStartLayout = null;
+      });
+      shape.addEventListener("pointercancel", () => {
+        isDraggingShape = false;
+        dragPointerId = null;
+        dragStartPoint = null;
+        dragStartLayout = null;
+        dragMoved = false;
+      });
     });
   }
 
   fineTuneInput.addEventListener("change", (event) => {
     const layout = placementLayoutForBackground(backgroundItem);
-    backgroundItem.freeLayout = { ...layout, fineTune: event.target.checked };
+    backgroundItem.freeLayout = event.target.checked ? prepareFineTuneLayout(layout) : { ...layout, fineTune: false };
     clearRendered();
-    updateUi(event.target.checked ? (layout.shape === "polygon" ? "顶点微调已开启，边长和边数已锁定" : "四角微调已开启，长和宽已锁定") : "微调已关闭");
+    const enabledMessage =
+      layout.shape === "polygon"
+        ? "顶点微调已开启，边长和边数已锁定"
+        : layout.shape === "rectangle"
+          ? "四角微调已开启，长和宽已锁定"
+          : "椭圆贴合微调已开启，可以拖动上下左右边缘点";
+    updateUi(event.target.checked ? enabledMessage : "微调已关闭");
     paintPlacementStage(backgroundItem);
     scheduleLivePreview();
   });
@@ -4034,29 +4672,41 @@ function bindPlacementStage(backgroundItem) {
     const layout = placementLayoutForBackground(backgroundItem);
     backgroundItem.freeLayout = { ...layout, tuneLineColor: normalizeTuneLineColor(event.target.value) };
     clearRendered();
-    updateUi("微调线色已更新");
+    updateUi("边缘颜色已更新");
     paintPlacementStage(backgroundItem);
+  });
+
+  roundPointCountInput.addEventListener("input", (event) => {
+    const value = readBoundedNumberInput(event.target, { integer: true });
+    if (value === null) return;
+    const layout = placementLayoutForBackground(backgroundItem);
+    if (!isRoundPlacementShape(layout) || !layout.fineTune) return;
+    backgroundItem.freeLayout = { ...layout, roundPointCount: value, roundPoints: null };
+    clearRendered();
+    updateUi(`椭圆微调点数已设为 ${value}，可以逐点调整`);
+    paintPlacementStage(backgroundItem);
+    scheduleLivePreview();
   });
 
   primaryInput.addEventListener("input", (event) => {
     const value = readBoundedNumberInput(event.target);
     if (value === null) return;
     const layout = placementLayoutForBackground(backgroundItem);
-    if (layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon")) return;
+    if (layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || layout.shape === "polygon" || isRoundPlacementShape(layout))) return;
     const controls = placementControlModel(layout);
-    backgroundItem.freeLayout = { ...layout, [controls.primaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners, polygonPoints: layout.shape === "polygon" ? null : layout.polygonPoints };
+    backgroundItem.freeLayout = { ...layout, [controls.primaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners, polygonPoints: layout.shape === "polygon" ? null : layout.polygonPoints, roundAnchors: isRoundPlacementShape(layout) ? null : layout.roundAnchors };
     updateShapeElement();
     savePlacementChange(`${controls.primaryLabel}已更新，可以重新生成`);
   });
 
   secondaryInput.addEventListener("input", (event) => {
     const layout = placementLayoutForBackground(backgroundItem);
-    if (layoutMode === "free" && layout.fineTune && layout.shape === "rectangle") return;
+    if (layoutMode === "free" && layout.fineTune && (layout.shape === "rectangle" || isRoundPlacementShape(layout))) return;
     const controls = placementControlModel(layout);
     if (!controls.secondaryKey) return;
     const value = readBoundedNumberInput(event.target);
     if (value === null) return;
-    backgroundItem.freeLayout = { ...layout, [controls.secondaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners };
+    backgroundItem.freeLayout = { ...layout, [controls.secondaryKey]: value, quadCorners: layout.shape === "rectangle" ? null : layout.quadCorners, roundAnchors: isRoundPlacementShape(layout) ? null : layout.roundAnchors };
     updateShapeElement();
     savePlacementChange(`${controls.secondaryLabel}已更新，可以重新生成`);
   });
