@@ -31,10 +31,24 @@ const state = {
   options: {
     backgroundFit: "cover",
     size: 3600,
+    adjustOutputSize: false,
     depth: 7,
     edgeColor: "#8f9188",
     shadow: 42,
     shine: 48,
+    lightAngle: -42,
+    lightStrength: 64,
+    reflection: 42,
+    rimLight: 58,
+    glare: 62,
+    viewTilt: 24,
+    spotlight: 0,
+    spotlightX: 38,
+    spotlightY: 34,
+    spotlightWidth: 46,
+    spotlightHeight: 46,
+    spotlightRotation: 0,
+    spotlightColor: "#ffffff",
     tilt: 0.06,
     material: "acrylic",
     badge: false,
@@ -228,14 +242,14 @@ const appTemplate = `
           <label>产品图片</label>
           <div class="product-upload-actions">
             <label class="primary panel-file-button">
-              <span data-icon="image"></span>
-              <input id="productInput" type="file" accept="image/*" multiple />
-              上传图片
-            </label>
-            <label class="primary panel-file-button">
               <span data-icon="folder"></span>
               <input id="folderInput" type="file" accept="image/*" webkitdirectory multiple />
               上传文件夹
+            </label>
+            <label class="primary panel-file-button">
+              <span data-icon="image"></span>
+              <input id="productInput" type="file" accept="image/*" multiple />
+              上传图片
             </label>
           </div>
           <p class="field-hint">直接上传图片每次最多 50 张；上传文件夹不限制数量，重复上传会追加保留。</p>
@@ -256,14 +270,14 @@ const appTemplate = `
           <label>背景库</label>
           <div class="background-actions">
             <label class="primary panel-file-button">
-              <span data-icon="image"></span>
-              <input id="backgroundUpload" type="file" accept="image/*" multiple />
-              上传背景
-            </label>
-            <label class="primary panel-file-button">
               <span data-icon="folder"></span>
               <input id="backgroundFolderUpload" type="file" accept="image/*" webkitdirectory multiple />
               上传文件夹
+            </label>
+            <label class="primary panel-file-button">
+              <span data-icon="image"></span>
+              <input id="backgroundUpload" type="file" accept="image/*" multiple />
+              上传背景
             </label>
           </div>
           <p class="field-hint">直接上传背景每次最多 50 张；上传文件夹不限制数量。</p>
@@ -276,13 +290,34 @@ const appTemplate = `
           </div>
 
           <div class="field">
-            <label for="size">输出尺寸 <b id="sizeValue">3600</b> × <b id="sizeValueY">3600</b> px</label>
-            <input id="size" type="range" min="800" max="8000" step="200" value="3600" />
+            <label for="depth">边缘厚度 <b id="depthValue">7</b></label>
+            <input id="depth" type="range" min="0" max="90" step="1" value="7" />
           </div>
 
           <div class="field">
-            <label for="depth">边缘厚度 <b id="depthValue">7</b></label>
-            <input id="depth" type="range" min="0" max="90" step="1" value="7" />
+            <label for="lightAngle">主光方向 <b id="lightAngleValue">-42</b>°</label>
+            <input id="lightAngle" type="range" min="-180" max="180" step="1" value="-42" />
+          </div>
+
+          <div class="field">
+            <label for="lightStrength">主光强度 <b id="lightStrengthValue">64</b>%</label>
+            <input id="lightStrength" type="range" min="0" max="100" step="1" value="64" />
+          </div>
+
+          <div class="field">
+            <label for="glare">强反光条 <b id="glareValue">62</b>%</label>
+            <input id="glare" type="range" min="0" max="100" step="1" value="62" />
+          </div>
+
+          <div class="field">
+            <label for="viewTilt">视角倾斜 <b id="viewTiltValue">24</b>%</label>
+            <input id="viewTilt" type="range" min="0" max="100" step="1" value="24" />
+          </div>
+
+          <div class="field">
+            <label for="spotlight">背景光斑 <b id="spotlightValue">0</b>%</label>
+            <input id="spotlight" type="range" min="0" max="100" step="1" value="0" />
+            <p class="field-hint">开启后在左侧预览图里拖动光斑，拉动边缘控制大小和压缩。</p>
           </div>
 
           <label class="toggle">
@@ -294,25 +329,6 @@ const appTemplate = `
             <label for="badgeSize">标识大小 <b id="badgeSizeValue">100</b>%</label>
             <input id="badgeSize" type="range" min="40" max="220" step="5" value="100" />
           </div>
-        </div>
-
-        <div class="render-actions-left">
-          <div class="panel__title">
-            <span data-icon="sparkles"></span>
-            <h2>生成操作</h2>
-          </div>
-          <button id="renderBtn" class="primary action-button" disabled>
-            <span data-icon="sparkles"></span>
-            生成 3D 效果
-          </button>
-          <button id="clearRenderedBtn" class="primary action-button" disabled>
-            <span data-icon="refresh"></span>
-            清空 3D 效果
-          </button>
-          <button id="downloadBtn" class="primary action-button" disabled>
-            <span data-icon="download"></span>
-            下载 ZIP
-          </button>
         </div>
 
       </aside>
@@ -334,6 +350,35 @@ const appTemplate = `
       </section>
 
       <section class="queue">
+        <div class="queue-section render-actions-panel">
+          <div class="queue-section-header">
+            <label>生成操作</label>
+            <span data-icon="sparkles"></span>
+          </div>
+          <div class="render-action-buttons">
+            <button id="renderBtn" class="primary action-button" disabled>
+              <span data-icon="sparkles"></span>
+              生成 3D 效果
+            </button>
+            <button id="clearRenderedBtn" class="primary action-button" disabled>
+              <span data-icon="refresh"></span>
+              清空 3D 效果
+            </button>
+            <button id="downloadBtn" class="primary action-button" disabled>
+              <span data-icon="download"></span>
+              下载 ZIP
+            </button>
+          </div>
+          <label class="toggle output-size-toggle">
+            <input id="adjustOutputSize" type="checkbox" />
+            <span>调整输出尺寸</span>
+          </label>
+          <div id="outputSizeField" class="field field--hidden">
+            <label for="size">输出尺寸 <b id="sizeValue">3600</b> × <b id="sizeValueY">3600</b> px</label>
+            <input id="size" type="range" min="800" max="8000" step="200" value="3600" />
+          </div>
+        </div>
+
         <div class="queue-section product-files-field">
           <div class="queue-section-header">
             <label>上传图片列表</label>
@@ -757,7 +802,7 @@ function bindEvents() {
   document.querySelector("#backgroundFolderUpload").addEventListener("change", handleBackgroundFiles);
   document.querySelector("#productShape").addEventListener("change", handleProductShape);
 
-  ["size", "depth", "badgeSize"].forEach((id) => {
+  ["size", "depth", "lightAngle", "lightStrength", "glare", "viewTilt", "spotlight", "badgeSize"].forEach((id) => {
     document.querySelector(`#${id}`).addEventListener("input", (event) => {
       const value = event.target.type === "range" ? Number(event.target.value) : event.target.value;
       state.options[id] = value;
@@ -774,6 +819,12 @@ function bindEvents() {
     clearRendered();
     updateUi(event.target.checked ? "2D FLAT 标识已开启，已刷新示例预览" : "2D FLAT 标识已关闭，已刷新示例预览");
     renderPreview({ forceProductPreview: true });
+  });
+
+  document.querySelector("#adjustOutputSize").addEventListener("change", (event) => {
+    state.options.adjustOutputSize = event.target.checked;
+    syncOutputSizeControl();
+    updateUi(event.target.checked ? "输出尺寸调整已展开" : "输出尺寸调整已收起，默认保持 3600 × 3600");
   });
 }
 
@@ -1489,19 +1540,21 @@ function normalizePlacementLayout(layout) {
   base.longAxis = clamp(numberOr(base.longAxis ?? base.width, 120), 0, 180);
   base.shortAxis = clamp(numberOr(base.shortAxis ?? base.height, 80), 0, 180);
   const roundBase = roundPlacementBaseDimensions(base.shape);
+  const roundScaleValue = Number(source.roundScale ?? source.uniformScale);
+  const roundScaleFallback = Number.isFinite(roundScaleValue) ? roundScaleValue : null;
   const legacyRoundWidth =
     base.shape === "ellipse"
-      ? numberOr(source.width ?? source.longAxis, base.longAxis)
-      : numberOr(source.width ?? source.circleWidth ?? source.circleLongAxis, base.circleWidth);
+      ? numberOr(source.width ?? source.longAxis ?? source.circleWidth, roundScaleFallback === null ? base.longAxis : roundBase.width * (roundScaleFallback / 100))
+      : numberOr(source.width ?? source.circleWidth ?? source.circleLongAxis, roundScaleFallback === null ? base.circleWidth : roundBase.width * (roundScaleFallback / 100));
   const legacyRoundHeight =
     base.shape === "ellipse"
-      ? numberOr(source.height ?? source.shortAxis, base.shortAxis)
-      : numberOr(source.height ?? source.circleHeight ?? source.circleShortAxis, base.circleHeight);
+      ? numberOr(source.height ?? source.shortAxis ?? source.circleHeight, roundScaleFallback === null ? base.shortAxis : roundBase.height * (roundScaleFallback / 100))
+      : numberOr(source.height ?? source.circleHeight ?? source.circleShortAxis, roundScaleFallback === null ? base.circleHeight : roundBase.height * (roundScaleFallback / 100));
   base.stretchX = clamp(Math.round(numberOr(source.stretchX ?? source.roundScaleX ?? source.scaleX, (legacyRoundWidth / roundBase.width) * 100) * 10) / 10, 0, 220);
   base.stretchY = clamp(Math.round(numberOr(source.stretchY ?? source.roundScaleY ?? source.scaleY, (legacyRoundHeight / roundBase.height) * 100) * 10) / 10, 0, 220);
   base.circleWidth = clamp(roundBase.width * (base.stretchX / 100), 0, 220);
   base.circleHeight = clamp(roundBase.height * (base.stretchY / 100), 0, 220);
-  if (base.shape === "ellipse") {
+  if (base.shape === "circle" || base.shape === "ellipse") {
     base.longAxis = base.circleWidth;
     base.shortAxis = base.circleHeight;
   }
@@ -1509,16 +1562,6 @@ function normalizePlacementLayout(layout) {
   base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
   base.fineTune = Boolean(base.fineTune) && (base.shape === "rectangle" || base.shape === "polygon" || base.shape === "circle" || base.shape === "ellipse");
   base.roundScale = clamp(Math.round(numberOr(source.roundScale ?? source.uniformScale, Math.max(base.stretchX, base.stretchY)) * 10) / 10, 0, 220);
-  if ((base.shape === "circle" || base.shape === "ellipse") && !base.fineTune) {
-    base.stretchX = base.roundScale;
-    base.stretchY = base.roundScale;
-    base.circleWidth = clamp(roundBase.width * (base.roundScale / 100), 0, 220);
-    base.circleHeight = clamp(roundBase.height * (base.roundScale / 100), 0, 220);
-    if (base.shape === "ellipse") {
-      base.longAxis = base.circleWidth;
-      base.shortAxis = base.circleHeight;
-    }
-  }
   base.tuneLineColor = normalizeTuneLineColor(base.tuneLineColor);
   const roundDimensions = {
     width: clamp(base.circleWidth * PLACEMENT_DIMENSION_SCALE, 0, 94),
@@ -1865,12 +1908,18 @@ function placementControlModel(layout) {
   const normalized = normalizePlacementLayout(layout);
   if (isRoundPlacementShape(normalized)) {
     return {
-      primaryLabel: "整体缩放%",
-      primaryKey: "roundScale",
-      primaryValue: Math.round((normalized.roundScale ?? normalized.stretchX) * 10) / 10,
+      primaryLabel: "横向边长",
+      primaryKey: "circleWidth",
+      primaryValue: Math.round(normalized.circleWidth * 10) / 10,
       primaryMin: 0,
       primaryMax: 220,
       primaryStep: 0.1,
+      secondaryLabel: "纵向边长",
+      secondaryKey: "circleHeight",
+      secondaryValue: Math.round(normalized.circleHeight * 10) / 10,
+      secondaryMin: 0,
+      secondaryMax: 220,
+      secondaryStep: 0.1,
     };
   }
   if (normalized.shape === "polygon") {
@@ -2109,16 +2158,27 @@ function roundPlacementResizeHandlesMarkup(layout = null, dimensions = null) {
 function coarsePlacementResizeHandlesMarkup(layout) {
   const normalized = normalizePlacementLayout(layout);
   if (!isFineTunePlacementShape(normalized)) return "";
-  const handles = [
+  const handles = isRoundPlacementShape(normalized)
+    ? [
+        { corner: "tl", className: "placement-resize-handle--corner", label: "等比缩放" },
+        { corner: "tr", className: "placement-resize-handle--corner", label: "等比缩放" },
+        { corner: "br", className: "placement-resize-handle--corner", label: "等比缩放" },
+        { corner: "bl", className: "placement-resize-handle--corner", label: "等比缩放" },
+        { side: "left", axis: "x", className: "placement-resize-handle--x", label: "横向拉伸" },
+        { side: "right", axis: "x", className: "placement-resize-handle--x", label: "横向拉伸" },
+        { side: "top", axis: "y", className: "placement-resize-handle--y", label: "纵向拉伸" },
+        { side: "bottom", axis: "y", className: "placement-resize-handle--y", label: "纵向拉伸" },
+      ]
+    : [
     { side: "left", axis: "x", className: "placement-resize-handle--x", label: "横向缩放" },
     { side: "right", axis: "x", className: "placement-resize-handle--x", label: "横向缩放" },
     { side: "top", axis: "y", className: "placement-resize-handle--y", label: "纵向缩放" },
     { side: "bottom", axis: "y", className: "placement-resize-handle--y", label: "纵向缩放" },
-  ];
+      ];
   return handles
     .map(
       (handle) =>
-        `<button class="placement-resize-handle ${handle.className}" type="button" data-resize-axis="${handle.axis}" data-resize-side="${handle.side}" aria-label="${handle.label}"></button>`,
+        `<button class="placement-resize-handle ${handle.className}" type="button"${handle.axis ? ` data-resize-axis="${handle.axis}"` : ""}${handle.side ? ` data-resize-side="${handle.side}"` : ""}${handle.corner ? ` data-resize-corner="${handle.corner}"` : ""} aria-label="${handle.label}"></button>`,
     )
     .join("");
 }
@@ -2169,27 +2229,43 @@ function fitPlacementPolygonPoint(layout, index, point) {
   });
 }
 
-function fitRoundPlacementStretch(layout, axis, point) {
+function fitRoundPlacementStretch(layout, axis, point, mode = "axis") {
   const normalized = normalizePlacementLayout(layout);
   if (!isRoundPlacementShape(normalized)) return normalized;
   const localPoint = localPointFromCanvasPercent(normalized, point);
   const roundBase = roundPlacementBaseDimensions(normalized.shape);
-  const baseSize = axis === "x" ? roundBase.width : roundBase.height;
-  const distance = Math.abs(axis === "x" ? localPoint.x : localPoint.y);
-  const placementSize = distance * 2;
-  const nextStretch = clamp(Math.round((placementSize / (baseSize * PLACEMENT_DIMENSION_SCALE)) * 1000) / 10, 0, 220);
+  const currentWidth = Math.max(0.1, normalized.circleWidth);
+  const currentHeight = Math.max(0.1, normalized.circleHeight);
+  const pointerWidth = (Math.abs(localPoint.x) * 2) / PLACEMENT_DIMENSION_SCALE;
+  const pointerHeight = (Math.abs(localPoint.y) * 2) / PLACEMENT_DIMENSION_SCALE;
+  const nextWidth =
+    mode === "uniform"
+      ? clamp(Math.round(currentWidth * Math.max(pointerWidth / currentWidth, pointerHeight / currentHeight) * 10) / 10, 0, 220)
+      : axis === "x"
+        ? clamp(Math.round(pointerWidth * 10) / 10, 0, 220)
+        : normalized.circleWidth;
+  const nextHeight =
+    mode === "uniform"
+      ? clamp(Math.round(currentHeight * Math.max(pointerWidth / currentWidth, pointerHeight / currentHeight) * 10) / 10, 0, 220)
+      : axis === "y"
+        ? clamp(Math.round(pointerHeight * 10) / 10, 0, 220)
+        : normalized.circleHeight;
   return normalizePlacementLayout({
     ...normalized,
-    roundScale: nextStretch,
-    stretchX: nextStretch,
-    stretchY: nextStretch,
+    circleWidth: nextWidth,
+    circleHeight: nextHeight,
+    longAxis: nextWidth,
+    shortAxis: nextHeight,
+    stretchX: (nextWidth / roundBase.width) * 100,
+    stretchY: (nextHeight / roundBase.height) * 100,
+    roundScale: Math.max((nextWidth / roundBase.width) * 100, (nextHeight / roundBase.height) * 100),
   });
 }
 
-function fitPlacementCoarseResize(layout, axis, point) {
+function fitPlacementCoarseResize(layout, axis, point, mode = "axis") {
   const normalized = normalizePlacementLayout(layout);
   if (isRoundPlacementShape(normalized)) {
-    return fitRoundPlacementStretch(normalized, axis, point);
+    return fitRoundPlacementStretch(normalized, axis, point, mode);
   }
   const localPoint = localPointFromCanvasPercent(normalized, point);
   const distance = Math.abs(axis === "x" ? localPoint.x : localPoint.y);
@@ -2753,6 +2829,8 @@ function drawCustomRoundProductView(ctx, image, size, layout, depth, shadow, shi
   shade.addColorStop(1, "rgba(0,0,0,0.12)");
   ctx.fillStyle = shade;
   ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
+  drawLocalLightingOverlay(ctx, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight, 1.05);
+  drawLocalGlareStripe(ctx, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight, 1.1);
   if (material === "acrylic") {
     const gloss = ctx.createRadialGradient(imageBounds.minX + imageWidth * 0.34, imageBounds.minY + imageHeight * 0.18, imageWidth * 0.04, imageBounds.minX + imageWidth * 0.44, imageBounds.minY + imageHeight * 0.28, Math.max(imageWidth, imageHeight) * 0.36);
     gloss.addColorStop(0, `rgba(255,255,255,${0.026 + shine * 0.03})`);
@@ -2844,6 +2922,8 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
   shade.addColorStop(1, "rgba(0,0,0,0.12)");
   ctx.fillStyle = shade;
   ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
+  drawLocalLightingOverlay(ctx, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight, 1.05);
+  drawLocalGlareStripe(ctx, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight, 1.1);
   if (material === "acrylic") {
     const gloss = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.minY + imageHeight * 0.5);
     gloss.addColorStop(0, `rgba(255,255,255,${0.04 + shine * 0.055})`);
@@ -2937,6 +3017,8 @@ function drawCustomPolygonProductView(ctx, image, size, layout, depth, shadow, s
   shade.addColorStop(1, "rgba(0,0,0,0.12)");
   ctx.fillStyle = shade;
   ctx.fillRect(imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
+  drawLocalLightingOverlay(ctx, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight, 1.05);
+  drawLocalGlareStripe(ctx, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight, 1.1);
   if (material === "acrylic") {
     const gloss = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.minY + imageHeight * 0.5);
     gloss.addColorStop(0, `rgba(255,255,255,${0.04 + shine * 0.055})`);
@@ -3051,12 +3133,14 @@ function placementShapeMarkup(layout, view, options = {}) {
   const polygonTune = fineTuneActive && normalized.shape === "polygon";
   const roundTune = fineTuneActive && isRoundPlacementShape(normalized);
   const coarseResize = options.draggable && !fineTuneActive && isFineTunePlacementShape(normalized);
+  const roundCoarseBox = coarseResize && isRoundPlacementShape(normalized);
   const classes = [
     "placement-stage-shape",
     `placement-stage-shape--${normalized.shape}`,
     options.draggable ? "placement-stage-shape--draggable" : "placement-stage-shape--fixed",
     roundTune || coarseResize ? "placement-stage-shape--resizable" : "",
     fineTuneActive ? "placement-stage-shape--fine-tune" : "",
+    roundCoarseBox ? "placement-stage-shape--round-box" : "",
   ].join(" ");
   const content =
     normalized.shape === "polygon"
@@ -3084,6 +3168,34 @@ function badgeMarkerMarkup() {
   return `
     <div class="badge-marker" style="left: ${state.options.badgeX}%; top: ${state.options.badgeY}%; width: ${markerSize}%;" title="拖动 2D FLAT 标识">
       <canvas class="badge-marker-canvas" width="512" height="512" aria-hidden="true"></canvas>
+    </div>
+  `;
+}
+
+function spotlightControlMarkup() {
+  const strength = clamp(numberOr(state.options.spotlight, 0), 0, 100);
+  if (strength <= 0) return "";
+  const x = clamp(numberOr(state.options.spotlightX, 38), 0, 100);
+  const y = clamp(numberOr(state.options.spotlightY, 34), 0, 100);
+  const width = clamp(numberOr(state.options.spotlightWidth ?? state.options.spotlightSize, 46), 1, 140);
+  const height = clamp(numberOr(state.options.spotlightHeight ?? state.options.spotlightSize, 46), 1, 140);
+  const rotation = clamp(numberOr(state.options.spotlightRotation, 0), -180, 180);
+  const color = state.options.spotlightColor || "#ffffff";
+  return `
+    <div
+      class="spotlight-control"
+      style="left:${x}%; top:${y}%; width:${width}%; height:${height}%; --spotlight-rotate:${rotation}deg; --spotlight-color:${color}; --spotlight-alpha:${0.16 + (strength / 100) * 0.42};"
+      title="拖动移动光斑，拉动控制点调整大小和压缩"
+    >
+      <span class="spotlight-control__glow"></span>
+      <button class="spotlight-rotate-handle" type="button" data-spotlight-rotate aria-label="旋转光斑"></button>
+      ${["tl", "tr", "br", "bl"].map((corner) => `<button class="spotlight-handle spotlight-handle--corner" type="button" data-spotlight-corner="${corner}" aria-label="调整光斑大小"></button>`).join("")}
+      ${[
+        ["left", "x"],
+        ["right", "x"],
+        ["top", "y"],
+        ["bottom", "y"],
+      ].map(([side, axis]) => `<button class="spotlight-handle spotlight-handle--side" type="button" data-spotlight-side="${side}" data-spotlight-axis="${axis}" aria-label="压缩光斑"></button>`).join("")}
     </div>
   `;
 }
@@ -3249,6 +3361,8 @@ async function renderProductFromSource(source, options, backgroundItem, canvas =
     drawBadgeView(ctx, source, size, { cx: 0.50, cy: 0.49, r: 0.36, depth: 1.18, x: 1, y: 1, yaw: 0, rot: -0.03, primary: true }, depth, shadow, shine, options.material, productScale, renderShapeModel);
   }
 
+  drawSpotlight(ctx, size);
+
   if (options.badge) drawBadge(ctx, size, options.badgeX, options.badgeY, options.badgeSize);
 
   return await canvasToJpegBlob(canvas);
@@ -3261,6 +3375,31 @@ function drawBackground(ctx, size, backgroundItem) {
   }
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, size, size);
+}
+
+function drawSpotlight(ctx, size) {
+  const strength = clamp(numberOr(state.options.spotlight, 0) / 100, 0, 1);
+  if (strength <= 0) return;
+  const x = size * (clamp(numberOr(state.options.spotlightX, 38), 0, 100) / 100);
+  const y = size * (clamp(numberOr(state.options.spotlightY, 34), 0, 100) / 100);
+  const width = size * (clamp(numberOr(state.options.spotlightWidth ?? state.options.spotlightSize, 46), 1, 140) / 100);
+  const height = size * (clamp(numberOr(state.options.spotlightHeight ?? state.options.spotlightSize, 46), 1, 140) / 100);
+  const rotation = (clamp(numberOr(state.options.spotlightRotation, 0), -180, 180) * Math.PI) / 180;
+  const radius = Math.max(width, height) / 2;
+  const color = hexToRgb(state.options.spotlightColor || "#ffffff");
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.scale(width / Math.max(width, height), height / Math.max(width, height));
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+  glow.addColorStop(0, `rgba(${color.r},${color.g},${color.b},${0.08 + strength * 0.62})`);
+  glow.addColorStop(0.28, `rgba(${color.r},${color.g},${color.b},${0.04 + strength * 0.28})`);
+  glow.addColorStop(0.62, `rgba(${color.r},${color.g},${color.b},${0.012 + strength * 0.08})`);
+  glow.addColorStop(1, `rgba(${color.r},${color.g},${color.b},0)`);
+  ctx.fillStyle = glow;
+  ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
+  ctx.restore();
 }
 
 function drawBackgroundPhotoWash(ctx, size, key) {
@@ -3594,15 +3733,16 @@ function drawStudioFloor(ctx, size, backgroundItem) {
 }
 
 function drawBadgeView(ctx, source, size, view, depth, shadow, shine, material, productScale, shapeModel = { shape: "circle", sides: 6, x: 1, y: 1 }) {
+  const lighting = getLightingOptions();
   drawProductView(ctx, source, {
     cx: size * view.cx,
     cy: size * view.cy,
     radius: size * view.r * productScale,
     depth: depth * view.depth * productScale,
     xScale: view.x,
-    yScale: view.y,
+    yScale: view.y * (1 - lighting.tilt * 0.2),
     yaw: view.yaw,
-    pitch: view.pitch || 0,
+    pitch: (view.pitch || 0) + lighting.tilt * 0.58,
     rotation: shapeModel.fixedRotation ? 0 : view.rot,
     shadow,
     shine,
@@ -3673,9 +3813,12 @@ function traceRoundedRectPath(ctx, x, y, width, height, radius) {
 function drawProductView(ctx, image, view) {
   drawCastShadow(ctx, view);
   drawReflection(ctx, view);
+  drawBackRimLight(ctx, view);
   drawExtrudedEdge(ctx, view);
   drawFace(ctx, image, view);
+  drawDirectionalLight(ctx, view);
   drawMaterialFinish(ctx, view);
+  drawGlareStripe(ctx, view);
   drawPinRim(ctx, view);
   drawSpecularEdge(ctx, view);
 }
@@ -3747,10 +3890,12 @@ function drawCastShadow(ctx, view) {
 function drawReflection(ctx, view) {
   if (!view.primary) return;
   const { rx, ry } = productBounds(view);
+  const lighting = getLightingOptions();
+  if (lighting.reflection <= 0) return;
   ctx.save();
   const fade = ctx.createLinearGradient(0, view.cy + ry * 0.55, 0, view.cy + ry * 1.2);
-  fade.addColorStop(0, "rgba(255,255,255,0.34)");
-  fade.addColorStop(0.36, "rgba(255,255,255,0.12)");
+  fade.addColorStop(0, `rgba(255,255,255,${0.12 + lighting.reflection * 0.36})`);
+  fade.addColorStop(0.36, `rgba(255,255,255,${0.04 + lighting.reflection * 0.16})`);
   fade.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = fade;
   ctx.beginPath();
@@ -3765,6 +3910,113 @@ function drawReflection(ctx, view) {
   );
   ctx.fill();
   ctx.restore();
+}
+
+function getLightingOptions() {
+  return {
+    angle: (clamp(numberOr(state.options.lightAngle, -42), -180, 180) * Math.PI) / 180,
+    strength: clamp(numberOr(state.options.lightStrength, 64) / 100, 0, 1),
+    reflection: clamp(numberOr(state.options.reflection, 42) / 100, 0, 1),
+    rim: clamp(numberOr(state.options.rimLight, 58) / 100, 0, 1),
+    glare: clamp(numberOr(state.options.glare, 62) / 100, 0, 1),
+    tilt: clamp(numberOr(state.options.viewTilt, 24) / 100, 0, 1),
+  };
+}
+
+function drawLocalLightingOverlay(ctx, x, y, width, height, shapeScale = 1) {
+  const lighting = getLightingOptions();
+  if (lighting.strength <= 0) return;
+  const dx = Math.cos(lighting.angle);
+  const dy = Math.sin(lighting.angle);
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  const span = Math.max(width, height) * shapeScale;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const highlight = ctx.createLinearGradient(cx - dx * span, cy - dy * span, cx + dx * span, cy + dy * span);
+  highlight.addColorStop(0, `rgba(255,255,255,${0.05 + lighting.strength * 0.24})`);
+  highlight.addColorStop(0.32, `rgba(255,255,255,${0.015 + lighting.strength * 0.08})`);
+  highlight.addColorStop(0.62, "rgba(255,255,255,0)");
+  highlight.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = highlight;
+  ctx.fillRect(x, y, width, height);
+  ctx.globalCompositeOperation = "multiply";
+  const shade = ctx.createLinearGradient(cx - dx * span, cy - dy * span, cx + dx * span, cy + dy * span);
+  shade.addColorStop(0, "rgba(255,255,255,1)");
+  shade.addColorStop(0.58, "rgba(255,255,255,1)");
+  shade.addColorStop(1, `rgba(0,0,0,${0.06 + lighting.strength * 0.18})`);
+  ctx.fillStyle = shade;
+  ctx.fillRect(x, y, width, height);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.restore();
+}
+
+function drawLocalGlareStripe(ctx, x, y, width, height, shapeScale = 1) {
+  const lighting = getLightingOptions();
+  if (lighting.glare <= 0) return;
+  const stripeAngle = lighting.angle + Math.PI / 2.8;
+  const dx = Math.cos(stripeAngle);
+  const dy = Math.sin(stripeAngle);
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  const span = Math.max(width, height) * shapeScale;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const stripe = ctx.createLinearGradient(cx - dx * span, cy - dy * span, cx + dx * span, cy + dy * span);
+  stripe.addColorStop(0, "rgba(255,255,255,0)");
+  stripe.addColorStop(0.42, "rgba(255,255,255,0)");
+  stripe.addColorStop(0.49, `rgba(255,255,255,${0.08 + lighting.glare * 0.42})`);
+  stripe.addColorStop(0.53, `rgba(255,255,255,${0.04 + lighting.glare * 0.24})`);
+  stripe.addColorStop(0.62, "rgba(255,255,255,0)");
+  stripe.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = stripe;
+  ctx.fillRect(x, y, width, height);
+  ctx.restore();
+}
+
+function drawDirectionalLight(ctx, view) {
+  const { rx, ry } = productBounds(view);
+  withProductTransform(ctx, view, () => {
+    ctx.save();
+    ctx.beginPath();
+    traceProductShape(ctx, view);
+    ctx.clip();
+    drawLocalLightingOverlay(ctx, -rx, -ry, rx * 2, ry * 2, 1.05);
+    ctx.restore();
+  });
+}
+
+function drawBackRimLight(ctx, view) {
+  const lighting = getLightingOptions();
+  if (lighting.rim <= 0) return;
+  const { radius } = view;
+  const dx = Math.cos(lighting.angle);
+  const dy = Math.sin(lighting.angle);
+  withProductTransform(ctx, view, () => {
+    ctx.save();
+    ctx.translate((-dx * radius * 0.035) / Math.max(0.001, view.xScale), (-dy * radius * 0.035) / Math.max(0.001, view.yScale));
+    ctx.globalCompositeOperation = "screen";
+    ctx.shadowColor = `rgba(255,255,255,${0.35 + lighting.rim * 0.45})`;
+    ctx.shadowBlur = Math.max(12, radius * (0.09 + lighting.rim * 0.08));
+    ctx.strokeStyle = `rgba(255,255,255,${0.16 + lighting.rim * 0.42})`;
+    ctx.lineWidth = Math.max(4, radius * (0.018 + lighting.rim * 0.02));
+    ctx.beginPath();
+    traceProductShape(ctx, view, -ctx.lineWidth * 0.1);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawGlareStripe(ctx, view) {
+  const { rx, ry } = productBounds(view);
+  withProductTransform(ctx, view, () => {
+    ctx.save();
+    ctx.beginPath();
+    traceProductShape(ctx, view);
+    ctx.clip();
+    drawLocalGlareStripe(ctx, -rx, -ry, rx * 2, ry * 2, 1.14);
+    ctx.restore();
+  });
 }
 
 function drawExtrudedEdge(ctx, view) {
@@ -4111,14 +4363,14 @@ function updateUi(status) {
     const control = document.querySelector(`#${id}`);
     if (control) control.disabled = productUploadLocked;
   });
-  ["backgroundUpload", "backgroundFolderUpload", "size", "depth", "badge", "badgeSize"].forEach((id) => {
+  ["backgroundUpload", "backgroundFolderUpload", "size", "adjustOutputSize", "depth", "lightAngle", "lightStrength", "glare", "viewTilt", "spotlight", "badge", "badgeSize"].forEach((id) => {
     const control = document.querySelector(`#${id}`);
     if (control) control.disabled = controlsLocked;
   });
   document.querySelector("#productUploadField")?.classList.toggle("field--disabled", productUploadLocked);
   document.querySelector("#backgroundUploadField")?.classList.toggle("field--disabled", controlsLocked);
   document.querySelector(".render-controls--left")?.classList.toggle("field--disabled", controlsLocked);
-  document.querySelector(".render-actions-left")?.classList.toggle("field--disabled", controlsLocked);
+  document.querySelector(".render-actions-panel")?.classList.toggle("field--disabled", controlsLocked);
   document.querySelector("#statusTitle").textContent =
     status || (hasFiles ? (hasShape ? (selectedCount ? "已上传图片，可以生成" : "请至少勾选一张上传图片") : "已上传图片，请先选择图片形状") : "等待上传图片");
   document.querySelector("#countPill").textContent = `${total} 张成品`;
@@ -4130,6 +4382,7 @@ function updateUi(status) {
   paintBackgroundLibrary();
   paintProductFileList();
   syncOptionLabels();
+  syncOutputSizeControl();
   syncProductShapeControl();
   paintFileList(state.rendered.length);
 }
@@ -4263,10 +4516,19 @@ function escapeHtml(value) {
 }
 
 function syncOptionLabels() {
-  ["size", "depth", "badgeSize"].forEach((id) => {
-    document.querySelector(`#${id}Value`).textContent = state.options[id];
+  ["size", "depth", "lightAngle", "lightStrength", "glare", "viewTilt", "spotlight", "badgeSize"].forEach((id) => {
+    const label = document.querySelector(`#${id}Value`);
+    if (label) label.textContent = state.options[id];
   });
-  document.querySelector("#sizeValueY").textContent = state.options.size;
+  const sizeValueY = document.querySelector("#sizeValueY");
+  if (sizeValueY) sizeValueY.textContent = state.options.size;
+}
+
+function syncOutputSizeControl() {
+  const toggle = document.querySelector("#adjustOutputSize");
+  const field = document.querySelector("#outputSizeField");
+  if (toggle) toggle.checked = Boolean(state.options.adjustOutputSize);
+  if (field) field.classList.toggle("field--hidden", !state.options.adjustOutputSize);
 }
 
 function syncProductShapeControl() {
@@ -4354,6 +4616,7 @@ function paintPlacementStage(backgroundItem, options = {}) {
         ${livePreviewUrl ? `<img class="placement-live-preview" src="${livePreviewUrl}" alt="实时 3D 预览" draggable="false" />` : ""}
         ${views.map((view) => placementShapeMarkup(layout, view, { draggable: layoutMode === "free", scaleMultiplier: fixedScaleMultiplier, fineTuneActive, preserveCircle: preserveFixedCircle })).join("")}
         ${state.options.badge ? badgeMarkerMarkup() : ""}
+        ${spotlightControlMarkup()}
       </div>
       <div class="placement-controls">
         <div class="placement-control placement-control--select placement-shape-summary">
@@ -4512,6 +4775,127 @@ function bindPlacementStage(backgroundItem) {
     };
   };
 
+  const spotlightControl = stage.querySelector(".spotlight-control");
+  const updateSpotlightControl = () => {
+    if (!spotlightControl) return;
+    const strength = clamp(numberOr(state.options.spotlight, 0), 0, 100);
+    const x = clamp(numberOr(state.options.spotlightX, 38), 0, 100);
+    const y = clamp(numberOr(state.options.spotlightY, 34), 0, 100);
+    const width = clamp(numberOr(state.options.spotlightWidth ?? state.options.spotlightSize, 46), 1, 140);
+    const height = clamp(numberOr(state.options.spotlightHeight ?? state.options.spotlightSize, 46), 1, 140);
+    const rotation = clamp(numberOr(state.options.spotlightRotation, 0), -180, 180);
+    spotlightControl.style.left = `${x}%`;
+    spotlightControl.style.top = `${y}%`;
+    spotlightControl.style.width = `${width}%`;
+    spotlightControl.style.height = `${height}%`;
+    spotlightControl.style.setProperty("--spotlight-rotate", `${rotation}deg`);
+    spotlightControl.style.setProperty("--spotlight-alpha", `${0.16 + (strength / 100) * 0.42}`);
+    spotlightControl.style.setProperty("--spotlight-color", state.options.spotlightColor || "#ffffff");
+  };
+
+  const saveSpotlightChange = (message = "光斑位置已更新，可以重新生成") => {
+    clearRendered();
+    updateUi(message);
+    scheduleLivePreview();
+  };
+
+  if (spotlightControl) {
+    let isDraggingSpotlight = false;
+    let dragMode = "";
+    let dragStartPoint = null;
+    let dragStart = null;
+    let dragMoved = false;
+
+    const spotlightLocalPoint = (point, center, rotationDegrees) => {
+      const rotation = (rotationDegrees * Math.PI) / 180;
+      const dx = point.x - center.x;
+      const dy = point.y - center.y;
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+      return {
+        x: dx * cos + dy * sin,
+        y: -dx * sin + dy * cos,
+      };
+    };
+
+    const moveSpotlight = (event) => {
+      if (!dragStartPoint || !dragStart) return;
+      const point = pointerToCanvasPercent(event);
+      const deltaX = point.x - dragStartPoint.x;
+      const deltaY = point.y - dragStartPoint.y;
+      if (dragMode === "move") {
+        state.options.spotlightX = clamp(Math.round((dragStart.x + deltaX) * 10) / 10, 0, 100);
+        state.options.spotlightY = clamp(Math.round((dragStart.y + deltaY) * 10) / 10, 0, 100);
+      } else if (dragMode === "rotate") {
+        const angle = Math.atan2(point.y - dragStart.y, point.x - dragStart.x);
+        let degrees = Math.round(((angle + Math.PI / 2) * 180) / Math.PI * 10) / 10;
+        while (degrees > 180) degrees -= 360;
+        while (degrees < -180) degrees += 360;
+        state.options.spotlightRotation = degrees;
+      } else {
+        const centerX = dragStart.x;
+        const centerY = dragStart.y;
+        const local = spotlightLocalPoint(point, { x: centerX, y: centerY }, dragStart.rotation);
+        if (dragMode.includes("x")) {
+          state.options.spotlightWidth = clamp(Math.round(Math.abs(local.x) * 20) / 10, 1, 140);
+        }
+        if (dragMode.includes("y")) {
+          state.options.spotlightHeight = clamp(Math.round(Math.abs(local.y) * 20) / 10, 1, 140);
+        }
+      }
+      dragMoved = dragMoved || Math.abs(deltaX) > 0.05 || Math.abs(deltaY) > 0.05;
+      updateSpotlightControl();
+      clearRendered();
+      scheduleLivePreview();
+    };
+
+    spotlightControl.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      isDraggingSpotlight = true;
+      const rotateHandle = event.target.closest("[data-spotlight-rotate]");
+      const sideHandle = event.target.closest("[data-spotlight-axis]");
+      const cornerHandle = event.target.closest("[data-spotlight-corner]");
+      dragMode = rotateHandle ? "rotate" : cornerHandle ? "xy" : sideHandle?.dataset.spotlightAxis || "move";
+      dragStartPoint = pointerToCanvasPercent(event);
+      dragStart = {
+        x: clamp(numberOr(state.options.spotlightX, 38), 0, 100),
+        y: clamp(numberOr(state.options.spotlightY, 34), 0, 100),
+        width: clamp(numberOr(state.options.spotlightWidth ?? state.options.spotlightSize, 46), 1, 140),
+        height: clamp(numberOr(state.options.spotlightHeight ?? state.options.spotlightSize, 46), 1, 140),
+        rotation: clamp(numberOr(state.options.spotlightRotation, 0), -180, 180),
+      };
+      dragMoved = false;
+      spotlightControl.setPointerCapture(event.pointerId);
+      moveSpotlight(event);
+    });
+    spotlightControl.addEventListener("pointermove", (event) => {
+      if (!isDraggingSpotlight) return;
+      event.preventDefault();
+      event.stopPropagation();
+      moveSpotlight(event);
+    });
+    spotlightControl.addEventListener("pointerup", (event) => {
+      if (!isDraggingSpotlight) return;
+      event.preventDefault();
+      event.stopPropagation();
+      isDraggingSpotlight = false;
+      spotlightControl.releasePointerCapture(event.pointerId);
+      saveSpotlightChange(dragMode === "move" ? "光斑位置已更新，可以重新生成" : dragMode === "rotate" ? "光斑旋转角度已更新，可以重新生成" : "光斑大小和压缩已更新，可以重新生成");
+      dragMode = "";
+      dragStartPoint = null;
+      dragStart = null;
+      dragMoved = false;
+    });
+    spotlightControl.addEventListener("pointercancel", () => {
+      isDraggingSpotlight = false;
+      dragMode = "";
+      dragStartPoint = null;
+      dragStart = null;
+      dragMoved = false;
+    });
+  }
+
   bindBadgeMarkerDrag(canvas, badgeMarker);
 
   if (layoutMode === "free") {
@@ -4519,11 +4903,12 @@ function bindPlacementStage(backgroundItem) {
     resizeHandles.forEach((handle) => {
       let isDraggingResize = false;
       const axis = handle.dataset.resizeAxis;
+      const resizeMode = handle.dataset.resizeCorner ? "uniform" : "axis";
       const roundIndex = handle.dataset.roundIndex;
       const moveResize = (event) => {
         const point = pointerToCanvasPercent(event);
         const layout = placementLayoutForBackground(backgroundItem);
-        backgroundItem.freeLayout = layout.fineTune && isRoundPlacementShape(layout) ? fitRoundPlacementPoint(layout, roundIndex, point) : fitPlacementCoarseResize(layout, axis, point);
+        backgroundItem.freeLayout = layout.fineTune && isRoundPlacementShape(layout) ? fitRoundPlacementPoint(layout, roundIndex, point) : fitPlacementCoarseResize(layout, axis, point, resizeMode);
         updateShapeElement();
         clearRendered();
         scheduleLivePreview();
@@ -4549,7 +4934,7 @@ function bindPlacementStage(backgroundItem) {
         isDraggingResize = false;
         handle.releasePointerCapture(event.pointerId);
         const layout = placementLayoutForBackground(backgroundItem);
-        savePlacementChange(layout.fineTune && isRoundPlacementShape(layout) ? "椭圆贴合点已独立微调，可以重新生成" : axis === "x" ? "横向尺寸已更新，可以重新生成" : "纵向尺寸已更新，可以重新生成");
+        savePlacementChange(layout.fineTune && isRoundPlacementShape(layout) ? "椭圆贴合点已独立微调，可以重新生成" : resizeMode === "uniform" ? "整体尺寸已等比更新，可以重新生成" : axis === "x" ? "横向边长已更新，可以重新生成" : "纵向边长已更新，可以重新生成");
       });
       handle.addEventListener("pointercancel", () => {
         isDraggingResize = false;
