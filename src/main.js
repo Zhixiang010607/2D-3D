@@ -1420,6 +1420,10 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function roundToTenth(value) {
+  return Math.round(value * 10) / 10;
+}
+
 function readBoundedNumberInput(input, { integer = false } = {}) {
   const raw = input.value.trim();
   const min = Number(input.min);
@@ -1534,11 +1538,11 @@ function normalizePlacementLayout(layout) {
   base.circleWidth = clamp(numberOr(base.circleWidth ?? base.circleLongAxis ?? base.width, circleDiameter), 0, 180);
   base.circleHeight = clamp(numberOr(base.circleHeight ?? base.circleShortAxis ?? base.height, circleDiameter), 0, 180);
   base.sides = Math.round(clamp(numberOr(base.sides, 6), 3, 12));
-  base.sideLength = clamp(numberOr(base.sideLength ?? legacyDiameter * Math.sin(Math.PI / base.sides), 50), 0, 140);
-  base.rectLength = clamp(numberOr(base.rectLength ?? base.width, 120), 0, 180);
-  base.rectWidth = clamp(numberOr(base.rectWidth ?? base.height, 80), 0, 180);
-  base.longAxis = clamp(numberOr(base.longAxis ?? base.width, 120), 0, 180);
-  base.shortAxis = clamp(numberOr(base.shortAxis ?? base.height, 80), 0, 180);
+  base.sideLength = clamp(roundToTenth(numberOr(base.sideLength ?? legacyDiameter * Math.sin(Math.PI / base.sides), 50)), 0, 140);
+  base.rectLength = clamp(roundToTenth(numberOr(base.rectLength ?? base.width, 120)), 0, 180);
+  base.rectWidth = clamp(roundToTenth(numberOr(base.rectWidth ?? base.height, 80)), 0, 180);
+  base.longAxis = clamp(roundToTenth(numberOr(base.longAxis ?? base.width, 120)), 0, 180);
+  base.shortAxis = clamp(roundToTenth(numberOr(base.shortAxis ?? base.height, 80)), 0, 180);
   const roundBase = roundPlacementBaseDimensions(base.shape);
   const roundScaleValue = Number(source.roundScale ?? source.uniformScale);
   const roundScaleFallback = Number.isFinite(roundScaleValue) ? roundScaleValue : null;
@@ -1550,18 +1554,18 @@ function normalizePlacementLayout(layout) {
     base.shape === "ellipse"
       ? numberOr(source.height ?? source.shortAxis ?? source.circleHeight, roundScaleFallback === null ? base.shortAxis : roundBase.height * (roundScaleFallback / 100))
       : numberOr(source.height ?? source.circleHeight ?? source.circleShortAxis, roundScaleFallback === null ? base.circleHeight : roundBase.height * (roundScaleFallback / 100));
-  base.stretchX = clamp(Math.round(numberOr(source.stretchX ?? source.roundScaleX ?? source.scaleX, (legacyRoundWidth / roundBase.width) * 100) * 10) / 10, 0, 220);
-  base.stretchY = clamp(Math.round(numberOr(source.stretchY ?? source.roundScaleY ?? source.scaleY, (legacyRoundHeight / roundBase.height) * 100) * 10) / 10, 0, 220);
+  base.stretchX = clamp(roundToTenth(numberOr(source.stretchX ?? source.roundScaleX ?? source.scaleX, (legacyRoundWidth / roundBase.width) * 100)), 0, 220);
+  base.stretchY = clamp(roundToTenth(numberOr(source.stretchY ?? source.roundScaleY ?? source.scaleY, (legacyRoundHeight / roundBase.height) * 100)), 0, 220);
   base.circleWidth = clamp(roundBase.width * (base.stretchX / 100), 0, 220);
   base.circleHeight = clamp(roundBase.height * (base.stretchY / 100), 0, 220);
   if (base.shape === "circle" || base.shape === "ellipse") {
     base.longAxis = base.circleWidth;
     base.shortAxis = base.circleHeight;
   }
-  base.fixedScale = clamp(numberOr(base.fixedScale, 100), 0, 180);
-  base.rotation = clamp(Math.round(numberOr(base.rotation, 0) * 10) / 10, -180, 180);
+  base.fixedScale = clamp(roundToTenth(numberOr(base.fixedScale, 100)), 0, 180);
+  base.rotation = clamp(roundToTenth(numberOr(base.rotation, 0)), -180, 180);
   base.fineTune = Boolean(base.fineTune) && (base.shape === "rectangle" || base.shape === "polygon" || base.shape === "circle" || base.shape === "ellipse");
-  base.roundScale = clamp(Math.round(numberOr(source.roundScale ?? source.uniformScale, Math.max(base.stretchX, base.stretchY)) * 10) / 10, 0, 220);
+  base.roundScale = clamp(roundToTenth(numberOr(source.roundScale ?? source.uniformScale, Math.max(base.stretchX, base.stretchY))), 0, 220);
   base.tuneLineColor = normalizeTuneLineColor(base.tuneLineColor);
   const roundDimensions = {
     width: clamp(base.circleWidth * PLACEMENT_DIMENSION_SCALE, 0, 94),
@@ -1926,10 +1930,10 @@ function placementControlModel(layout) {
     return {
       primaryLabel: "边长",
       primaryKey: "sideLength",
-      primaryValue: normalized.sideLength,
+      primaryValue: roundToTenth(normalized.sideLength),
       primaryMin: 0,
       primaryMax: 140,
-      primaryStep: 1,
+      primaryStep: 0.1,
       showSides: true,
     };
   }
@@ -1937,31 +1941,31 @@ function placementControlModel(layout) {
     return {
       primaryLabel: "长",
       primaryKey: "rectLength",
-      primaryValue: normalized.rectLength,
+      primaryValue: roundToTenth(normalized.rectLength),
       primaryMin: 0,
       primaryMax: 180,
-      primaryStep: 1,
+      primaryStep: 0.1,
       secondaryLabel: "宽",
       secondaryKey: "rectWidth",
-      secondaryValue: normalized.rectWidth,
+      secondaryValue: roundToTenth(normalized.rectWidth),
       secondaryMin: 0,
       secondaryMax: 180,
-      secondaryStep: 1,
+      secondaryStep: 0.1,
     };
   }
   return {
     primaryLabel: "横向伸缩%",
     primaryKey: "stretchX",
-    primaryValue: Math.round(normalized.stretchX),
+    primaryValue: roundToTenth(normalized.stretchX),
     primaryMin: 0,
     primaryMax: 220,
-    primaryStep: 1,
+    primaryStep: 0.1,
     secondaryLabel: "纵向伸缩%",
     secondaryKey: "stretchY",
-    secondaryValue: Math.round(normalized.stretchY),
+    secondaryValue: roundToTenth(normalized.stretchY),
     secondaryMin: 0,
     secondaryMax: 220,
-    secondaryStep: 1,
+    secondaryStep: 0.1,
   };
 }
 
@@ -2273,7 +2277,7 @@ function fitPlacementCoarseResize(layout, axis, point, mode = "axis") {
   if (normalized.shape === "rectangle") {
     return normalizePlacementLayout({
       ...normalized,
-      [axis === "x" ? "rectLength" : "rectWidth"]: clamp(Math.round(placementSize / PLACEMENT_DIMENSION_SCALE), 0, 180),
+      [axis === "x" ? "rectLength" : "rectWidth"]: clamp(roundToTenth(placementSize / PLACEMENT_DIMENSION_SCALE), 0, 180),
       quadCorners: null,
     });
   }
@@ -2281,7 +2285,7 @@ function fitPlacementCoarseResize(layout, axis, point, mode = "axis") {
     const sideLength = (placementSize / PLACEMENT_DIMENSION_SCALE) * Math.sin(Math.PI / normalized.sides);
     return normalizePlacementLayout({
       ...normalized,
-      sideLength: clamp(Math.round(sideLength), 0, 140),
+      sideLength: clamp(roundToTenth(sideLength), 0, 140),
       polygonPoints: null,
     });
   }
@@ -2653,6 +2657,10 @@ function getImageContentRect(image) {
   return rect;
 }
 
+function getFullImageRect(image) {
+  return { x: 0, y: 0, width: image.width, height: image.height };
+}
+
 function coverSourceRect(image, targetAspect, baseRect = getImageContentRect(image)) {
   const imageAspect = baseRect.width / baseRect.height;
   if (imageAspect > targetAspect) {
@@ -2759,7 +2767,7 @@ function drawCustomRoundProductView(ctx, image, size, layout, depth, shadow, shi
   const bounds = pointArrayBounds(pathSamples);
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const height = Math.max(1, bounds.maxY - bounds.minY);
-  const sourceRect = getImageContentRect(image);
+  const sourceRect = getFullImageRect(image);
   const rotation = placementRotationRad(normalized);
   const center = {
     x: (normalized.x / 100) * size,
@@ -2819,9 +2827,8 @@ function drawCustomRoundProductView(ctx, image, size, layout, depth, shadow, shi
   ctx.clip();
   ctx.translate(center.x, center.y);
   ctx.rotate(rotation);
-  const imageBleed = Math.max(8, size * 0.012);
   ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX - imageBleed, imageBounds.minY - imageBleed, imageWidth + imageBleed * 2, imageHeight + imageBleed * 2);
+  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
   ctx.filter = "none";
   const shade = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.maxY);
   shade.addColorStop(0, "rgba(255,255,255,0.035)");
@@ -2856,7 +2863,7 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
   const normalized = normalizePlacementLayout(layout);
   const points = placementQuadCanvasPoints(normalized, size);
   const bounds = quadBounds(points);
-  const sourceRect = getImageContentRect(image);
+  const sourceRect = getFullImageRect(image);
   const rotation = placementRotationRad(normalized);
   const center = {
     x: (normalized.x / 100) * size,
@@ -2910,11 +2917,45 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
   ctx.beginPath();
   traceQuad(ctx, points);
   ctx.clip();
+  if (normalized.fineTune) {
+    const targetBounds = quadBounds(points);
+    const targetWidth = Math.max(1, targetBounds.maxX - targetBounds.minX);
+    const targetHeight = Math.max(1, targetBounds.maxY - targetBounds.minY);
+    ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
+    drawImageWarpedToQuad(ctx, image, points, sourceRect, 32);
+    ctx.filter = "none";
+    const shade = ctx.createLinearGradient(targetBounds.minX, targetBounds.minY, targetBounds.maxX, targetBounds.maxY);
+    shade.addColorStop(0, "rgba(255,255,255,0.035)");
+    shade.addColorStop(0.58, "rgba(255,255,255,0)");
+    shade.addColorStop(1, "rgba(0,0,0,0.12)");
+    ctx.fillStyle = shade;
+    ctx.fillRect(targetBounds.minX, targetBounds.minY, targetWidth, targetHeight);
+    drawLocalLightingOverlay(ctx, targetBounds.minX, targetBounds.minY, targetWidth, targetHeight, 1.05);
+    drawLocalGlareStripe(ctx, targetBounds.minX, targetBounds.minY, targetWidth, targetHeight, 1.1);
+    if (material === "acrylic") {
+      const gloss = ctx.createLinearGradient(targetBounds.minX, targetBounds.minY, targetBounds.maxX, targetBounds.minY + targetHeight * 0.5);
+      gloss.addColorStop(0, `rgba(255,255,255,${0.04 + shine * 0.055})`);
+      gloss.addColorStop(0.44, `rgba(255,255,255,${0.01 + shine * 0.018})`);
+      gloss.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = gloss;
+      ctx.fillRect(targetBounds.minX, targetBounds.minY, targetWidth, targetHeight);
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgba(0,0,0,0.28)";
+    ctx.lineWidth = Math.max(1, size * 0.001);
+    ctx.beginPath();
+    traceQuad(ctx, points);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   ctx.translate(center.x, center.y);
   ctx.rotate(rotation);
-  const imageBleed = Math.max(8, size * 0.012);
   ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX - imageBleed, imageBounds.minY - imageBleed, imageWidth + imageBleed * 2, imageHeight + imageBleed * 2);
+  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
   ctx.filter = "none";
   const shade = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.maxY);
   shade.addColorStop(0, "rgba(255,255,255,0.035)");
@@ -2951,7 +2992,7 @@ function drawCustomPolygonProductView(ctx, image, size, layout, depth, shadow, s
   const bounds = pointArrayBounds(points);
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const height = Math.max(1, bounds.maxY - bounds.minY);
-  const sourceRect = getImageContentRect(image);
+  const sourceRect = getFullImageRect(image);
   const rotation = placementRotationRad(normalized);
   const center = {
     x: (normalized.x / 100) * size,
@@ -3007,9 +3048,8 @@ function drawCustomPolygonProductView(ctx, image, size, layout, depth, shadow, s
   ctx.clip();
   ctx.translate(center.x, center.y);
   ctx.rotate(rotation);
-  const imageBleed = Math.max(8, size * 0.012);
   ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX - imageBleed, imageBounds.minY - imageBleed, imageWidth + imageBleed * 2, imageHeight + imageBleed * 2);
+  ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, imageBounds.minX, imageBounds.minY, imageWidth, imageHeight);
   ctx.filter = "none";
   const shade = ctx.createLinearGradient(imageBounds.minX, imageBounds.minY, imageBounds.maxX, imageBounds.maxY);
   shade.addColorStop(0, "rgba(255,255,255,0.035)");
@@ -4079,7 +4119,7 @@ function drawFace(ctx, image, view) {
 
     const targetWidth = rx * 2;
     const targetHeight = ry * 2;
-    const sourceRect = getImageContentRect(image);
+    const sourceRect = getFullImageRect(image);
     ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
     ctx.drawImage(image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height, -targetWidth / 2, -targetHeight / 2, targetWidth, targetHeight);
     ctx.filter = "none";
@@ -4625,7 +4665,7 @@ function paintPlacementStage(backgroundItem, options = {}) {
         </div>
         <label class="placement-control placement-control--scale ${layoutMode === "free" ? "field--hidden" : ""}">
           <span>${fixedScaleText} <b data-placement-value="fixedScale">${layout.fixedScale}</b>%</span>
-          <input id="placementFixedScale" type="range" min="0" max="180" step="5" value="${layout.fixedScale}" />
+          <input id="placementFixedScale" class="number-control" type="number" min="0" max="180" step="0.1" value="${layout.fixedScale}" />
         </label>
         <label class="placement-control ${layoutMode === "free" ? "" : "field--hidden"} ${lockPrimary ? "placement-control--locked" : ""}">
           <span>${controls.primaryLabel}</span>
@@ -4754,7 +4794,7 @@ function bindPlacementStage(backgroundItem) {
     primaryInput.disabled = lockPrimary;
     secondaryInput.disabled = lockSecondary;
     sidesInput.disabled = lockSides;
-    clearNumberInputState(primaryInput, secondaryInput, sidesInput, rotationInput, roundPointCountInput);
+    clearNumberInputState(primaryInput, secondaryInput, sidesInput, rotationInput, fixedScaleInput, roundPointCountInput);
   };
 
   const savePlacementChange = (message) => {
@@ -5117,7 +5157,9 @@ function bindPlacementStage(backgroundItem) {
 
   fixedScaleInput.addEventListener("input", (event) => {
     const layout = placementLayoutForBackground(backgroundItem);
-    backgroundItem.freeLayout = { ...layout, fixedScale: clamp(Number(event.target.value), 0, 180) };
+    const value = readBoundedNumberInput(event.target);
+    if (value === null) return;
+    backgroundItem.freeLayout = { ...layout, fixedScale: roundToTenth(value) };
     updateShapeElement();
     savePlacementChange("整体占比已更新，可以重新生成");
   });
@@ -5209,5 +5251,3 @@ const iconSliders = svg('<path d="M21 4H14"></path><path d="M10 4H3"></path><pat
 const iconSparkles = svg('<path d="m12 3-1.9 5.8L4 11l6.1 2.2L12 19l1.9-5.8L20 11l-6.1-2.2Z"></path><path d="M5 3v4"></path><path d="M3 5h4"></path><path d="M19 17v4"></path><path d="M17 19h4"></path>');
 
 bootstrap();
-
-
