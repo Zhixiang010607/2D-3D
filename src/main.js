@@ -2757,6 +2757,15 @@ function expandTriangle(points, amount) {
 }
 
 function drawImageWarpedToQuad(ctx, image, points, sourceRect, steps = 16) {
+  if (steps <= 1) {
+    const s00 = { x: sourceRect.x, y: sourceRect.y };
+    const s10 = { x: sourceRect.x + sourceRect.width, y: sourceRect.y };
+    const s11 = { x: sourceRect.x + sourceRect.width, y: sourceRect.y + sourceRect.height };
+    const s01 = { x: sourceRect.x, y: sourceRect.y + sourceRect.height };
+    drawImageTriangle(ctx, image, [s00, s10, s11], [points.tl, points.tr, points.br]);
+    drawImageTriangle(ctx, image, [s00, s11, s01], [points.tl, points.br, points.bl]);
+    return;
+  }
   for (let y = 0; y < steps; y += 1) {
     const v0 = y / steps;
     const v1 = (y + 1) / steps;
@@ -2939,7 +2948,7 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
     const targetWidth = Math.max(1, targetBounds.maxX - targetBounds.minX);
     const targetHeight = Math.max(1, targetBounds.maxY - targetBounds.minY);
     ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-    drawImageWarpedToQuad(ctx, image, points, sourceRect, 18);
+    drawImageWarpedToQuad(ctx, image, points, sourceRect, 1);
     ctx.filter = "none";
     const shade = ctx.createLinearGradient(targetBounds.minX, targetBounds.minY, targetBounds.maxX, targetBounds.maxY);
     shade.addColorStop(0, "rgba(255,255,255,0.035)");
