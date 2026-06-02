@@ -2728,15 +2728,32 @@ function drawImageTriangle(ctx, image, source, target) {
   const maxY = Math.min(image.height, Math.ceil(Math.max(...source.map((point) => point.y)) + 1));
   if (maxX <= minX || maxY <= minY) return;
   ctx.save();
+  const clipTarget = expandTriangle(target, 0.9);
   ctx.beginPath();
-  ctx.moveTo(target[0].x, target[0].y);
-  ctx.lineTo(target[1].x, target[1].y);
-  ctx.lineTo(target[2].x, target[2].y);
+  ctx.moveTo(clipTarget[0].x, clipTarget[0].y);
+  ctx.lineTo(clipTarget[1].x, clipTarget[1].y);
+  ctx.lineTo(clipTarget[2].x, clipTarget[2].y);
   ctx.closePath();
   ctx.clip();
   ctx.setTransform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
   ctx.drawImage(image, minX, minY, maxX - minX, maxY - minY, minX, minY, maxX - minX, maxY - minY);
   ctx.restore();
+}
+
+function expandTriangle(points, amount) {
+  const center = {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+  };
+  return points.map((point) => {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const distance = Math.max(0.001, Math.hypot(dx, dy));
+    return {
+      x: point.x + (dx / distance) * amount,
+      y: point.y + (dy / distance) * amount,
+    };
+  });
 }
 
 function drawImageWarpedToQuad(ctx, image, points, sourceRect, steps = 16) {
@@ -2922,7 +2939,7 @@ function drawQuadProductView(ctx, image, size, layout, depth, shadow, shine, mat
     const targetWidth = Math.max(1, targetBounds.maxX - targetBounds.minX);
     const targetHeight = Math.max(1, targetBounds.maxY - targetBounds.minY);
     ctx.filter = "saturate(1.28) contrast(1.08) brightness(1.04)";
-    drawImageWarpedToQuad(ctx, image, points, sourceRect, 32);
+    drawImageWarpedToQuad(ctx, image, points, sourceRect, 18);
     ctx.filter = "none";
     const shade = ctx.createLinearGradient(targetBounds.minX, targetBounds.minY, targetBounds.maxX, targetBounds.maxY);
     shade.addColorStop(0, "rgba(255,255,255,0.035)");
